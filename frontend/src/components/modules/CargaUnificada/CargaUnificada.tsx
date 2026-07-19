@@ -1,0 +1,227 @@
+import { useEffect, useRef, useState } from 'react';
+import { ApiError } from '../../../api/client';
+import { buscarClientePorIdentificacion } from '../../../api/clientes';
+import { guardarPresupuesto as guardarPresupuestoApi } from '../../../api/ventas';
+import { useGlobalHotkeys } from '../../../hooks/useGlobalHotkeys';
+import type { Cliente, FacturarVentaResult, ItemInput, TipoDocumento } from '../../../types/domain';
+import { CatalogoMateriales } from './CatalogoMateriales';
+import { RendicionPago } from './RendicionPago';
+
+const ETIQUETA_TIPO: Record<TipoDocumento, string> = {
+  FACTURA_A: 'Factura A (CUIT)',
+  FACTURA_B: 'Factura B (DNI)',
+  PRESUPUESTO: 'Presupuesto',
+};
+
+function calcularSubtotal(item: ItemInput): number {
+  return Number((item.cantidad * item.peso_teorico_kg * item.precio_unitario).toFixed(2));
+}
+
+export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Element {
+  const [cuitDniInput, setCuitDniInput] = useState('');
+  const [cliente, setCliente] = useState<Cliente | null>(null);
+  const [tipoDocumento, setTipoDocumento] = useState<TipoDocumento | null>(null);
+  const [items, setItems] = useState<ItemInput[]>([]);
+  const [catalogoAbierto, setCatalogoAbierto] = useState(false);
+  const [rendicionAbierta, setRendicionAbierta] = useState(false);
+  const [buscandoCliente, setBuscandoCliente] = useState(false);
+  const [guardandoPresupuesto, setGuardandoPresupuesto] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [mensaje, setMensaje] = useState<string | null>(null);
+
+  const inputClienteRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputClienteRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    if (!error && !mensaje) return;
+    const t = setTimeout(() => {
+      setError(null);
+      setMensaje(null);
+    }, 5000);
+    return () => clearTimeout(t);
+  }, [error, mensaje]);
+
+  const total = Number(items.reduce((acc, i) => acc + calcularSubtotal(i), 0).toFixed(2));
+
+  function limpiarFormulario(): void {
+    setCuitDniInput('');
+    setCliente(null);
+    setTipoDocumento(null);
+    setItems([]);
+    inputClienteRef.current?.focus();
+  }
+
+  async function buscarCliente(): Promise<void> {
+    if (!cuitDniInput.trim() || buscandoCliente) return;
+    setBuscandoCliente(true);
+    setError(null);
+    try {
+      const { cliente: encontrado, tipo_documento_sugerido } = await buscarClientePorIdentificacion(
+        cuitDniInput.trim(),
+      );
+      setCliente(encontrado);
+      setTipoDocumento(tipo_documento_sugerido);
+    } catch (err) {
+      setCliente(null);
+      setTipoDocumento(null);
+      setError(err instanceof ApiError ? err.message : 'No se pudo buscar el cliente.');
+    } finally {
+      setBuscandoCliente(false);
+    }
+  }
+
+  async function guardarPresupuesto(): Promise<void> {
+    if (!cliente || items.length === 0 || guardandoPresupuesto) {
+      setError('Cargá un cliente y al menos un ítem antes de guardar el presupuesto.');
+      return;
+    }
+    setGuardandoPresupuesto(true);
+    setError(null);
+    try {
+      const { documento } = await guardarPresupuestoApi(cliente.id_cliente, items);
+      setMensaje(`Presupuesto #${documento.id_documento} guardado.`);
+      limpiarFormulario();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'No se pudo guardar el presupuesto.');
+    } finally {
+      setGuardandoPresupuesto(false);
+    }
+  }
+
+  function onFacturado(resultado: FacturarVentaResult): void {
+    setRendicionAbierta(false);
+    setMensaje(
+      `${ETIQUETA_TIPO[resultado.documento.tipo_documento]} · Remito ${resultado.documento.nro_remito} · ` +
+        `Saldo pendiente: $${resultado.saldo_pendiente.toFixed(2)}`,
+    );
+    limpiarFormulario();
+  }
+
+  useGlobalHotkeys({
+    F1: () => {
+      if (!cliente) {
+        setError('Ingresá un cliente antes de abrir el catálogo (F1).');
+        return;
+      }
+      setCatalogoAbierto(true);
+    },
+    F2: () => void guardarPresupuesto(),
+    F12: () => {
+      if (!cliente || items.length === 0) {
+        setError('Cargá cliente e ítems antes de facturar (F12).');
+        return;
+      }
+      if (!rendicionAbierta) setRendicionAbierta(true);
+    },
+    Escape: () => {
+      if (rendicionAbierta) setRendicionAbierta(false);
+      else if (catalogoAbierto) setCatalogoAbierto(false);
+      else onSalir();
+    },
+  });
+
+  return (
+    <div className="flex h-full flex-col gap-4 overflow-y-auto bg-white p-6">
+      <div className="flex items-end gap-4">
+        <label className="block w-64 text-sm">
+          <span className="mb-1 block text-neutral-600">CUIT / DNI del cliente</span>
+          <input
+            ref={inputClienteRef}
+            value={cuitDniInput}
+            onChange={(e) => setCuitDniInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && void buscarCliente()}
+            placeholder="Enter para buscar"
+            disabled={cliente !== null}
+            className="w-full rounded border border-neutral-300 px-3 py-2 focus:border-acento disabled:bg-neutral-50"
+          />
+        </label>
+
+        {cliente && (
+          <div className="flex items-center gap-3 text-sm">
+            <div>
+              <div className="font-medium text-neutral-900">{cliente.nombre}</div>
+              <div className="text-xs text-neutral-500">
+                Límite de crédito: ${Number(cliente.limite_credito).toFixed(2)}
+              </div>
+            </div>
+            {tipoDocumento && (
+              <span className="rounded bg-acento/10 px-2 py-1 text-xs font-medium text-acento">
+                {ETIQUETA_TIPO[tipoDocumento]}
+              </span>
+            )}
+            <button
+              type="button"
+              tabIndex={-1}
+              onClick={limpiarFormulario}
+              className="text-xs text-neutral-400 hover:text-neutral-600"
+            >
+              cambiar
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="flex-1 rounded-lg border border-neutral-200">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-neutral-200 text-left text-xs uppercase tracking-wide text-neutral-500">
+              <th className="px-4 py-2">Material</th>
+              <th className="px-4 py-2 text-right">Cantidad</th>
+              <th className="px-4 py-2 text-right">Kilos</th>
+              <th className="px-4 py-2 text-right">Precio/kg</th>
+              <th className="px-4 py-2 text-right">Subtotal</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item, i) => (
+              <tr key={i} className="border-b border-neutral-100">
+                <td className="px-4 py-2">{item.descripcion}</td>
+                <td className="px-4 py-2 text-right font-mono">{item.cantidad}</td>
+                <td className="px-4 py-2 text-right font-mono">
+                  {(item.cantidad * item.peso_teorico_kg).toFixed(2)}
+                </td>
+                <td className="px-4 py-2 text-right font-mono">${item.precio_unitario.toFixed(2)}</td>
+                <td className="px-4 py-2 text-right font-mono">${calcularSubtotal(item).toFixed(2)}</td>
+              </tr>
+            ))}
+            {items.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-4 py-8 text-center text-neutral-400">
+                  Sin ítems. Presioná F1 para abrir el catálogo de hierros.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="flex items-center justify-between">
+        <div className="text-xs text-neutral-400">
+          F1 catálogo · F2 presupuesto · F12 facturar (pago mixto) · Esc cancelar
+        </div>
+        <div className="text-lg font-semibold text-neutral-900">
+          Total: <span className="font-mono">${total.toFixed(2)}</span>
+        </div>
+      </div>
+
+      {error && <p className="rounded bg-red-50 px-3 py-2 text-sm text-peligro">{error}</p>}
+      {mensaje && <p className="rounded bg-green-50 px-3 py-2 text-sm text-exito">{mensaje}</p>}
+
+      {catalogoAbierto && (
+        <CatalogoMateriales
+          onSeleccionar={(item) => {
+            setItems((prev) => [...prev, item]);
+            setCatalogoAbierto(false);
+          }}
+        />
+      )}
+
+      {rendicionAbierta && cliente && (
+        <RendicionPago total={total} clienteId={cliente.id_cliente} items={items} onExito={onFacturado} />
+      )}
+    </div>
+  );
+}

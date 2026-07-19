@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  /* Mostrador operado 100% por teclado: nunca ocultar el foco. */
+  :focus-visible {
+    outline: 2px solid theme('colors.acento.DEFAULT');
+    outline-offset: 1px;
+  }
+}
