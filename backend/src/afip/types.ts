@@ -1,4 +1,4 @@
-import type { TipoDocumento } from '../types/domain';
+import type { TipoDocumento, TipoDocumentoCliente } from '../types/domain';
 
 /**
  * Códigos de comprobante AFIP (tabla oficial "Tipos de Comprobante" de
@@ -18,9 +18,8 @@ export const TIPO_COMPROBANTE_NOTA_CREDITO_AFIP = { A: 3, B: 8 } as const;
 export const TIPO_COMPROBANTE_REMITO_INTERNO = 91;
 
 /** DocTipo AFIP: 80 = CUIT, 96 = DNI. */
-export function docTipoAfip(cuitDni: string): 80 | 96 {
-  const digitos = cuitDni.replace(/\D/g, '');
-  return digitos.length === 11 ? 80 : 96;
+export function docTipoAfip(tipoDocumentoCliente: TipoDocumentoCliente): 80 | 96 {
+  return tipoDocumentoCliente === 'CUIT' ? 80 : 96;
 }
 
 export interface TicketAcceso {

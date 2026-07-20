@@ -14,6 +14,10 @@ export const pool = new Pool({
   max: env.pg.poolMax,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000,
+  // `rejectUnauthorized: false` (no "sin TLS"): sigue viajando cifrado, sólo
+  // no valida la cadena de certificados — el ajuste que recomienda el propio
+  // quickstart de Neon para node-postgres.
+  ssl: env.pg.ssl ? { rejectUnauthorized: false } : undefined,
 });
 
 pool.on('error', (err) => {

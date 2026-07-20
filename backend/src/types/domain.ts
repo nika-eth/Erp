@@ -21,17 +21,64 @@ export interface Sucursal {
   nombre: string;
 }
 
+export type TipoDocumentoCliente = 'DNI' | 'CUIT';
+
+/**
+ * Regla AFIP: un DNI sólo puede ser CONSUMIDOR_FINAL; un CUIT nunca puede
+ * serlo (ver `crearCliente` en `clientes.service.ts`, que valida el cruce).
+ */
+export type CondicionIva = 'CONSUMIDOR_FINAL' | 'RESPONSABLE_INSCRIPTO' | 'MONOTRIBUTO' | 'EXENTO';
+
 export interface Cliente {
   id_cliente: number;
   nombre: string;
-  cuit_dni: string;
+  tipo_documento: TipoDocumentoCliente;
+  numero_documento: string;
+  condicion_iva: CondicionIva;
   limite_credito: string; // NUMERIC llega como string desde pg
   id_zona: number | null;
+  direccion: string | null;
+  telefono: string | null;
+  email: string | null;
 }
 
 export interface CuentaEmpresa {
   id_cuenta: number;
   nombre_cuenta: string;
+}
+
+/** Alta de cliente en mostrador (ver `clientes.service.ts` -> `crearCliente`). */
+export interface CrearClienteInput {
+  nombre: string;
+  tipo_documento: TipoDocumentoCliente;
+  numero_documento: string;
+  condicion_iva: CondicionIva;
+  limite_credito?: number;
+  id_zona?: number | null;
+  direccion?: string | null;
+  telefono?: string | null;
+  email?: string | null;
+}
+
+// -----------------------------------------------------------------------
+// Catálogo real de productos y stock por sucursal
+// -----------------------------------------------------------------------
+
+/**
+ * KILO   -> subtotal = (cantidad * peso_teorico_kg) * precio_unitario ($/kg)
+ * UNIDAD -> subtotal = cantidad * precio_unitario ($/unidad)
+ * Ver `sql/007_productos_stock.sql`. Todavía no está conectado a
+ * `facturarVenta` (sigue usando el catálogo hardcodeado).
+ */
+export type UnidadVentaProducto = 'KILO' | 'UNIDAD';
+
+export interface Producto {
+  id_producto: number;
+  sku: string;
+  descripcion: string;
+  unidad_venta: UnidadVentaProducto;
+  peso_teorico_kg: string; // NUMERIC llega como string desde pg
+  activo: boolean;
 }
 
 export interface SucursalSecuencia {
@@ -86,7 +133,8 @@ export interface MovimientoCuentaCorriente {
 export interface ResumenClienteCuentaCorriente {
   id_cliente: number;
   nombre: string;
-  cuit_dni: string;
+  tipo_documento: TipoDocumentoCliente;
+  numero_documento: string;
   limite_credito: string;
 }
 

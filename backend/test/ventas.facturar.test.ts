@@ -9,7 +9,8 @@ const app = createApp();
 const CLIENTE_CUIT = {
   id_cliente: 1,
   nombre: 'Construcciones del Sur SA',
-  cuit_dni: '30712345671', // 11 dígitos -> Factura A
+  tipo_documento: 'CUIT', // -> Factura A
+  numero_documento: '30712345671',
   limite_credito: '500000.00',
   id_zona: 1,
 };
@@ -17,7 +18,8 @@ const CLIENTE_CUIT = {
 const CLIENTE_DNI = {
   id_cliente: 2,
   nombre: 'Juan Perez',
-  cuit_dni: '30123456', // 8 dígitos -> Factura B
+  tipo_documento: 'DNI', // -> Factura B
+  numero_documento: '30123456',
   limite_credito: '50000.00',
   id_zona: null,
 };

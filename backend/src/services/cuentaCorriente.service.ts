@@ -13,9 +13,12 @@ export async function obtenerFichaCuentaCorriente(cliente_id: number): Promise<F
   const { rows: clienteRows } = await pool.query<{
     id_cliente: number;
     nombre: string;
-    cuit_dni: string;
+    tipo_documento: 'DNI' | 'CUIT';
+    numero_documento: string;
     limite_credito: string;
-  }>(`SELECT id_cliente, nombre, cuit_dni, limite_credito FROM clientes WHERE id_cliente = $1`, [cliente_id]);
+  }>(`SELECT id_cliente, nombre, tipo_documento, numero_documento, limite_credito FROM clientes WHERE id_cliente = $1`, [
+    cliente_id,
+  ]);
   const cliente = clienteRows[0];
   if (!cliente) {
     throw AppError.notFound('CLIENTE_NO_ENCONTRADO', `No existe el cliente id_cliente=${cliente_id}`);
