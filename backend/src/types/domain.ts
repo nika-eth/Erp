@@ -34,6 +34,27 @@ export interface CuentaEmpresa {
   nombre_cuenta: string;
 }
 
+// -----------------------------------------------------------------------
+// Catálogo real de productos y stock por sucursal
+// -----------------------------------------------------------------------
+
+/**
+ * KILO   -> subtotal = (cantidad * peso_teorico_kg) * precio_unitario ($/kg)
+ * UNIDAD -> subtotal = cantidad * precio_unitario ($/unidad)
+ * Ver `sql/007_productos_stock.sql`. Todavía no está conectado a
+ * `facturarVenta` (sigue usando el catálogo hardcodeado).
+ */
+export type UnidadVentaProducto = 'KILO' | 'UNIDAD';
+
+export interface Producto {
+  id_producto: number;
+  sku: string;
+  descripcion: string;
+  unidad_venta: UnidadVentaProducto;
+  peso_teorico_kg: string; // NUMERIC llega como string desde pg
+  activo: boolean;
+}
+
 export interface SucursalSecuencia {
   id_sucursal: number;
   tipo_documento: TipoDocumento;
