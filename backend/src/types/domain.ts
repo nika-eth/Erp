@@ -17,6 +17,7 @@ export interface Cliente {
   nombre: string;
   cuit_dni: string;
   limite_credito: string; // NUMERIC llega como string desde pg
+  id_zona: number | null;
 }
 
 export interface CuentaEmpresa {
@@ -49,6 +50,7 @@ export interface Documento {
   total_neto: string;
   tipo_documento: TipoDocumento;
   items: ItemDocumento[];
+  id_zona: number | null;
 }
 
 export interface MovimientoCuentaCorriente {
@@ -97,4 +99,59 @@ export interface FacturarVentaResult {
   documento: Documento;
   saldo_pendiente: number;
   movimientos: MovimientoCuentaCorriente[];
+}
+
+// -----------------------------------------------------------------------
+// Logística y despacho de camiones
+// -----------------------------------------------------------------------
+
+export interface Zona {
+  id_zona: number;
+  nombre: string;
+  casilleros_requeridos: number;
+}
+
+export interface Camion {
+  id_camion: number;
+  patente: string;
+  chofer: string;
+  capacidad_casilleros: number;
+  capacidad_kilos_max: string; // NUMERIC llega como string desde pg
+}
+
+/** Un remito ya asignado a un camión, tal como se muestra en la grilla de ruteo. */
+export interface EnvioAsignado {
+  id_envio: number;
+  id_documento: number;
+  nro_remito: number | null;
+  cliente: string;
+  zona: string;
+  casillerosRequeridos: number;
+  kilosTotales: number;
+}
+
+/** Ocupación de un camión para una fecha de despacho puntual. */
+export interface CamionJornada {
+  id_camion: number;
+  chofer: string;
+  patente: string;
+  capacidadCasilleros: number;
+  capacidadKilosMax: number;
+  envios: EnvioAsignado[];
+}
+
+/** Un remito facturado que todavía no fue asignado a ningún camión. */
+export interface DocumentoPendiente {
+  id_documento: number;
+  nro_remito: number | null;
+  cliente: string;
+  zona: string | null;
+  casillerosRequeridos: number | null;
+  kilosTotales: number;
+}
+
+export interface AsignarEnvioInput {
+  id_camion: number;
+  id_documento: number;
+  fecha_despacho: string; // 'YYYY-MM-DD'
 }

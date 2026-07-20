@@ -104,3 +104,55 @@ export interface FacturarVentaResult {
   saldo_pendiente: number;
   movimientos: MovimientoCuentaCorriente[];
 }
+
+// -----------------------------------------------------------------------
+// Logística y despacho de camiones
+// -----------------------------------------------------------------------
+
+export interface Zona {
+  id_zona: number;
+  nombre: string;
+  casilleros_requeridos: number;
+}
+
+export interface Camion {
+  id_camion: number;
+  patente: string;
+  chofer: string;
+  capacidad_casilleros: number;
+  capacidad_kilos_max: string;
+}
+
+export interface EnvioAsignado {
+  id_envio: number;
+  id_documento: number;
+  nro_remito: number | null;
+  cliente: string;
+  zona: string;
+  casillerosRequeridos: number;
+  kilosTotales: number;
+}
+
+export interface CamionJornada {
+  id_camion: number;
+  chofer: string;
+  patente: string;
+  capacidadCasilleros: number;
+  capacidadKilosMax: number;
+  envios: EnvioAsignado[];
+}
+
+export interface DocumentoPendiente {
+  id_documento: number;
+  nro_remito: number | null;
+  cliente: string;
+  zona: string | null;
+  casillerosRequeridos: number | null;
+  kilosTotales: number;
+}
+
+export interface AsignarEnvioInput {
+  id_camion: number;
+  id_documento: number;
+  fecha_despacho: string;
+}

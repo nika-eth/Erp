@@ -4,6 +4,7 @@ import { catalogosRouter } from './catalogos.routes';
 import { clientesRouter } from './clientes.routes';
 import { cuentaCorrienteRouter } from './cuentaCorriente.routes';
 import { documentosRouter } from './documentos.routes';
+import { logisticaRouter } from './logistica.routes';
 import { ventasRouter } from './ventas.routes';
 
 export const apiRouter = Router();
@@ -13,4 +14,5 @@ apiRouter.use('/catalogos', catalogosRouter);
 apiRouter.use('/clientes', clientesRouter);
 apiRouter.use('/cuenta-corriente', cuentaCorrienteRouter);
 apiRouter.use('/documentos', documentosRouter);
+apiRouter.use('/logistica', logisticaRouter);
 apiRouter.use('/ventas', ventasRouter);

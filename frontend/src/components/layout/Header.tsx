@@ -5,6 +5,7 @@ const ETIQUETAS_MODULO: Record<string, string> = {
   CARGA_UNIFICADA: 'Carga Unificada (F5)',
   HISTORIAL: 'Historial de Documentos (F3)',
   CUENTA_CORRIENTE: 'Ficha de Cuenta Corriente (F9)',
+  LOGISTICA: 'Control de Ruteo y Ocupación Diaria (F4)',
 };
 
 export function Header({ moduloActivo }: { moduloActivo: string }): JSX.Element {
