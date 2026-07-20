@@ -108,6 +108,7 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
     setTipoDocumento(nuevoCliente.tipo_documento === 'CUIT' ? 'FACTURA_A' : 'FACTURA_B');
     setClienteNoEncontrado(false);
     setCrearClienteAbierto(false);
+    setError(null);
     setMensaje(`Cliente "${nuevoCliente.nombre}" creado.`);
   }
 
