@@ -26,14 +26,24 @@ const CLIENTE_DNI = {
 
 const CUENTAS_EMPRESA: Record<number, string> = { 1: 'Efectivo', 2: 'Banco Galicia' };
 
-const ITEM = {
-  id_material: 'HRA-12',
+const PRODUCTO_HIERRO = {
+  id_producto: 1,
+  sku: 'HRA-12',
   descripcion: 'Hierro Redondo Aletado 12mm',
-  cantidad: 10,
-  peso_teorico_kg: 0.888,
-  precio_unitario: 1200,
+  unidad_venta: 'KILO',
+  peso_teorico_kg: '0.888',
+  activo: true,
 };
-// kilos = 8.88, subtotal = 10656 -> ver documento.utils.redondearMoneda
+const PRODUCTOS: Record<number, typeof PRODUCTO_HIERRO> = { 1: PRODUCTO_HIERRO };
+
+const ITEM = { id_producto: 1, cantidad: 10, precio_unitario: 1200 };
+// kilos = 10 * 0.888 = 8.88, subtotal (KILO) = 8.88 * 1200 = 10656 -> ver documento.utils.redondearMoneda
+
+function handlerProductos(sql: string, params: unknown[]): MockQueryResult | null {
+  if (!/FROM productos WHERE id_producto = ANY/.test(sql)) return null;
+  const ids = params[0] as number[];
+  return { rows: ids.filter((id) => id in PRODUCTOS).map((id) => PRODUCTOS[id]) };
+}
 
 let siguienteIdDocumento = 100;
 let siguienteNroRemito = 1;
@@ -54,6 +64,8 @@ function handlerFeliz(cliente: typeof CLIENTE_CUIT | typeof CLIENTE_DNI) {
   let ultimoDocumento: Record<string, unknown> | null = null;
 
   return (sql: string, params: unknown[]): MockQueryResult => {
+    const productos = handlerProductos(sql, params);
+    if (productos) return productos;
     if (/FROM clientes WHERE id_cliente/.test(sql)) {
       return { rows: params[0] === cliente.id_cliente ? [cliente] : [] };
     }
@@ -159,6 +171,64 @@ describe('POST /api/ventas/facturar', () => {
     expect(Number(pago1.haber) + Number(pago2.haber)).toBe(10000);
   });
 
+  it('un producto UNIDAD cobra cantidad * precio_unitario, sin multiplicar por kilos', async () => {
+    const PRODUCTO_AMOLADORA = {
+      id_producto: 2,
+      sku: 'AB1500',
+      descripcion: 'Amoladora Bosch 1300w',
+      unidad_venta: 'UNIDAD',
+      peso_teorico_kg: '2.500',
+      activo: true,
+    };
+    let ultimoDocumento: Record<string, unknown> | null = null;
+    setQueryHandler((sql, params) => {
+      if (/FROM productos WHERE id_producto = ANY/.test(sql)) return { rows: [PRODUCTO_AMOLADORA] };
+      if (/FROM clientes WHERE id_cliente/.test(sql)) return { rows: [CLIENTE_CUIT] };
+      if (/FROM cuentas_empresa WHERE id_cuenta = ANY/.test(sql)) {
+        return { rows: [{ id_cuenta: 1, nombre_cuenta: 'Efectivo' }] };
+      }
+      if (/INSERT INTO documentos/.test(sql)) {
+        const [id_sucursal_origen, cliente_id, total_neto, tipo_documento, items] = params;
+        ultimoDocumento = {
+          id_documento: siguienteIdDocumento++,
+          id_sucursal_origen,
+          nro_remito: siguienteNroRemito++,
+          fecha: new Date().toISOString(),
+          cliente_id,
+          total_neto: String(total_neto),
+          tipo_documento,
+          items: JSON.parse(items as string),
+          estado_afip: 'PENDIENTE',
+        };
+        return { rows: [ultimoDocumento] };
+      }
+      if (/INSERT INTO cuenta_corriente/.test(sql)) return { rows: [{ id_movimiento: 1 }] };
+      if (/pg_advisory_xact_lock/.test(sql)) return { rows: [] };
+      if (/UPDATE documentos/.test(sql)) {
+        ultimoDocumento = { ...ultimoDocumento, estado_afip: 'CONTINGENCIA' };
+        return { rows: [ultimoDocumento] };
+      }
+      if (/INSERT INTO cola_facturacion_afip/.test(sql)) return { rows: [] };
+      throw new Error(`Query no esperada: ${sql}`);
+    });
+    const token = crearToken();
+
+    const res = await request(app)
+      .post('/api/ventas/facturar')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        cliente_id: CLIENTE_CUIT.id_cliente,
+        items: [{ id_producto: 2, cantidad: 3, precio_unitario: 45000 }],
+        total_neto: 0,
+        pagos: [{ id_cuenta: 1, monto: 135000 }],
+      });
+
+    expect(res.status).toBe(201);
+    // 3 * 45000 = 135000 (NO 3 * 2.5kg * 45000, que sería el cálculo por kilo)
+    expect(Number(res.body.documento.total_neto)).toBe(135000);
+    expect(res.body.documento.items[0].kilos).toBe(7.5); // 3 * 2.5, informativo para logística
+  });
+
   it('detecta Factura B para clientes con DNI', async () => {
     setQueryHandler(handlerFeliz(CLIENTE_DNI));
     const token = crearToken();
@@ -180,6 +250,8 @@ describe('POST /api/ventas/facturar', () => {
 
   it('rebota con 422 cuando el trigger de límite de crédito rechaza la venta, y hace ROLLBACK', async () => {
     setQueryHandler((sql, params) => {
+      const productos = handlerProductos(sql, params);
+      if (productos) return productos;
       if (/FROM clientes WHERE id_cliente/.test(sql)) return { rows: [CLIENTE_CUIT] };
       if (/FROM cuentas_empresa WHERE id_cuenta = ANY/.test(sql)) {
         const ids = params[0] as number[];
@@ -272,6 +344,8 @@ describe('POST /api/ventas/facturar', () => {
 
   it('responde 400 si alguna cuenta de cobro no existe', async () => {
     setQueryHandler((sql, params) => {
+      const productos = handlerProductos(sql, params);
+      if (productos) return productos;
       if (/FROM clientes WHERE id_cliente/.test(sql)) return { rows: [CLIENTE_CUIT] };
       if (/FROM cuentas_empresa WHERE id_cuenta = ANY/.test(sql)) {
         const ids = params[0] as number[];

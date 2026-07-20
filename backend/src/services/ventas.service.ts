@@ -15,7 +15,9 @@ import type {
   FacturarVentaInput,
   FacturarVentaResult,
   ItemDocumento,
+  ItemInput,
   MovimientoCuentaCorriente,
+  Producto,
 } from '../types/domain';
 
 /** Valida la forma del payload antes de tocar la base de datos. */
@@ -30,10 +32,13 @@ function validarPayload(input: FacturarVentaInput): void {
     throw AppError.badRequest('PAYLOAD_INVALIDO', 'La venta debe tener al menos un medio de pago cargado.');
   }
   for (const item of input.items) {
-    if (item.cantidad <= 0 || item.peso_teorico_kg <= 0 || item.precio_unitario <= 0) {
+    if (!Number.isInteger(item.id_producto) || item.id_producto <= 0) {
+      throw AppError.badRequest('PAYLOAD_INVALIDO', 'Cada ítem requiere id_producto válido.');
+    }
+    if (item.cantidad <= 0 || item.precio_unitario <= 0) {
       throw AppError.badRequest(
         'PAYLOAD_INVALIDO',
-        `Ítem "${item.descripcion}" inválido: cantidad, peso_teorico_kg y precio_unitario deben ser positivos.`,
+        `Ítem id_producto=${item.id_producto} inválido: cantidad y precio_unitario deben ser positivos.`,
       );
     }
   }
@@ -44,16 +49,52 @@ function validarPayload(input: FacturarVentaInput): void {
   }
 }
 
-/** Calcula kilos y subtotal por ítem, y el total neto de la venta. */
-function calcularItems(input: FacturarVentaInput['items']): { items: ItemDocumento[]; totalNeto: number } {
+/**
+ * `descripcion`, `unidad_venta` y `peso_teorico_kg` se resuelven acá, no se
+ * confía en lo que mande el cliente (ver `ItemInput`). `activo = FALSE` se
+ * rechaza: un producto dado de baja no se puede seguir vendiendo.
+ */
+async function obtenerProductos(ids: number[], client?: PoolClient): Promise<Map<number, Producto>> {
+  const runner = client ?? pool;
+  const { rows } = await runner.query<Producto>(
+    `SELECT id_producto, sku, descripcion, unidad_venta, peso_teorico_kg, activo FROM productos WHERE id_producto = ANY($1::int[])`,
+    [ids],
+  );
+  const mapa = new Map(rows.map((r) => [r.id_producto, r]));
+  const faltantes = ids.filter((id) => !mapa.has(id));
+  if (faltantes.length > 0) {
+    throw AppError.badRequest('PRODUCTO_INVALIDO', `No existen los productos: ${faltantes.join(', ')}`);
+  }
+  const inactivos = rows.filter((r) => !r.activo).map((r) => r.sku);
+  if (inactivos.length > 0) {
+    throw AppError.badRequest('PRODUCTO_INACTIVO', `Producto(s) dado(s) de baja, no se pueden vender: ${inactivos.join(', ')}`);
+  }
+  return mapa;
+}
+
+/**
+ * Calcula kilos y subtotal por ítem, y el total neto de la venta.
+ *   KILO   -> subtotal = (cantidad * peso_teorico_kg) * precio_unitario ($/kg)
+ *   UNIDAD -> subtotal = cantidad * precio_unitario ($/unidad)
+ * `kilos` se calcula siempre igual en ambos modos: alimenta la capacidad de
+ * camión en logística, sea o no el producto el que fija el precio de venta.
+ */
+function calcularItems(input: ItemInput[], productos: Map<number, Producto>): { items: ItemDocumento[]; totalNeto: number } {
   const items: ItemDocumento[] = input.map((i) => {
-    const kilos = redondearMoneda(i.cantidad * i.peso_teorico_kg);
-    const subtotal = redondearMoneda(kilos * i.precio_unitario);
+    const producto = productos.get(i.id_producto)!;
+    const pesoTeorico = Number(producto.peso_teorico_kg);
+    const kilos = redondearMoneda(i.cantidad * pesoTeorico);
+    const subtotal =
+      producto.unidad_venta === 'KILO'
+        ? redondearMoneda(kilos * i.precio_unitario)
+        : redondearMoneda(i.cantidad * i.precio_unitario);
     return {
-      id_material: i.id_material,
-      descripcion: i.descripcion,
+      id_producto: i.id_producto,
+      sku: producto.sku,
+      descripcion: producto.descripcion,
+      unidad_venta: producto.unidad_venta,
       cantidad: i.cantidad,
-      peso_teorico_kg: i.peso_teorico_kg,
+      peso_teorico_kg: pesoTeorico,
       kilos,
       precio_unitario: i.precio_unitario,
       subtotal,
@@ -121,7 +162,8 @@ export async function facturarVenta(
 
   const cliente = await buscarClientePorId(input.cliente_id);
   const tipo_documento = tipoDocumentoVentaPorCliente(cliente.tipo_documento);
-  const { items, totalNeto } = calcularItems(input.items);
+  const productos = await obtenerProductos(input.items.map((i) => i.id_producto));
+  const { items, totalNeto } = calcularItems(input.items, productos);
 
   const totalPagos = redondearMoneda(input.pagos.reduce((acc, p) => acc + p.monto, 0));
   if (totalPagos > totalNeto) {
@@ -287,7 +329,8 @@ export async function guardarPresupuesto(
     throw AppError.badRequest('PAYLOAD_INVALIDO', 'El presupuesto debe tener al menos un ítem.');
   }
   await buscarClientePorId(input.cliente_id);
-  const { items, totalNeto } = calcularItems(input.items);
+  const productos = await obtenerProductos(input.items.map((i) => i.id_producto));
+  const { items, totalNeto } = calcularItems(input.items, productos);
 
   const { rows } = await pool.query<Documento>(
     `INSERT INTO documentos (id_sucursal_origen, fecha, cliente_id, total_neto, tipo_documento, items)

@@ -88,8 +88,10 @@ export interface SucursalSecuencia {
 }
 
 export interface ItemDocumento {
-  id_material: string;
+  id_producto: number;
+  sku: string;
   descripcion: string;
+  unidad_venta: UnidadVentaProducto;
   cantidad: number;
   peso_teorico_kg: number;
   kilos: number;
@@ -187,11 +189,15 @@ export interface PagoInput {
   monto: number;
 }
 
+/**
+ * `descripcion`/`peso_teorico_kg`/`unidad_venta` NO viajan del cliente: se
+ * resuelven server-side contra `productos` (ver `ventas.service.ts` ->
+ * `obtenerProductos`), igual que `nombre_cuenta` para los pagos — así el
+ * vendedor no puede alterar esos datos manipulando el request.
+ */
 export interface ItemInput {
-  id_material: string;
-  descripcion: string;
+  id_producto: number;
   cantidad: number;
-  peso_teorico_kg: number;
   precio_unitario: number;
 }
 

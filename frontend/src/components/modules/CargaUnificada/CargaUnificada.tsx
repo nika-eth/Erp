@@ -6,8 +6,8 @@ import { Comprobante, type ComprobanteProps } from '../../common/Comprobante';
 import { EstadoFiscalBadge } from '../../common/EstadoFiscalBadge';
 import { useAuth } from '../../../context/AuthContext';
 import { useGlobalHotkeys } from '../../../hooks/useGlobalHotkeys';
-import type { Cliente, Documento, FacturarVentaResult, ItemInput, TipoDocumento } from '../../../types/domain';
-import { CatalogoMateriales } from './CatalogoMateriales';
+import type { Cliente, Documento, FacturarVentaResult, ItemCarrito, TipoDocumento } from '../../../types/domain';
+import { CatalogoProductos } from './CatalogoProductos';
 import { CrearCliente } from './CrearCliente';
 import { RendicionPago } from './RendicionPago';
 
@@ -17,8 +17,14 @@ const ETIQUETA_TIPO: Record<TipoDocumento, string> = {
   PRESUPUESTO: 'Presupuesto',
 };
 
-function calcularSubtotal(item: ItemInput): number {
-  return Number((item.cantidad * item.peso_teorico_kg * item.precio_unitario).toFixed(2));
+/** KILO cobra por kilo (cantidad * peso_teorico_kg * precio); UNIDAD cobra directo cantidad * precio. */
+function calcularSubtotal(item: ItemCarrito): number {
+  const monto = item.unidad_venta === 'KILO' ? item.cantidad * item.peso_teorico_kg * item.precio_unitario : item.cantidad * item.precio_unitario;
+  return Number(monto.toFixed(2));
+}
+
+function aItemInput(item: ItemCarrito): { id_producto: number; cantidad: number; precio_unitario: number } {
+  return { id_producto: item.id_producto, cantidad: item.cantidad, precio_unitario: item.precio_unitario };
 }
 
 export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Element {
@@ -26,7 +32,7 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
   const [cuitDniInput, setCuitDniInput] = useState('');
   const [cliente, setCliente] = useState<Cliente | null>(null);
   const [tipoDocumento, setTipoDocumento] = useState<TipoDocumento | null>(null);
-  const [items, setItems] = useState<ItemInput[]>([]);
+  const [items, setItems] = useState<ItemCarrito[]>([]);
   const [catalogoAbierto, setCatalogoAbierto] = useState(false);
   const [rendicionAbierta, setRendicionAbierta] = useState(false);
   const [crearClienteAbierto, setCrearClienteAbierto] = useState(false);
@@ -120,7 +126,7 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
     setGuardandoPresupuesto(true);
     setError(null);
     try {
-      const { documento } = await guardarPresupuestoApi(cliente.id_cliente, items);
+      const { documento } = await guardarPresupuestoApi(cliente.id_cliente, items.map(aItemInput));
       setMensaje(`Presupuesto #${documento.id_documento} guardado.`);
       setComprobante({ documento, cliente, sucursalNombre: sucursal?.nombre ?? '' });
       limpiarFormulario();
@@ -251,10 +257,10 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
         <table className="w-full select-text text-sm">
           <thead>
             <tr className="border-b border-neutral-200 text-left text-xs uppercase tracking-wide text-neutral-500">
-              <th className="px-4 py-2">Material</th>
+              <th className="px-4 py-2">Producto</th>
               <th className="px-4 py-2 text-right">Cantidad</th>
               <th className="px-4 py-2 text-right">Kilos</th>
-              <th className="px-4 py-2 text-right">Precio/kg</th>
+              <th className="px-4 py-2 text-right">Precio</th>
               <th className="px-4 py-2 text-right">Subtotal</th>
               <th className="px-4 py-2" />
             </tr>
@@ -262,12 +268,18 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
           <tbody>
             {items.map((item, i) => (
               <tr key={i} className="border-b border-neutral-100">
-                <td className="px-4 py-2">{item.descripcion}</td>
+                <td className="px-4 py-2">
+                  {item.descripcion}
+                  <span className="ml-2 font-mono text-xs text-neutral-400">{item.sku}</span>
+                </td>
                 <td className="px-4 py-2 text-right font-mono">{item.cantidad}</td>
                 <td className="px-4 py-2 text-right font-mono">
                   {(item.cantidad * item.peso_teorico_kg).toFixed(2)}
                 </td>
-                <td className="px-4 py-2 text-right font-mono">${item.precio_unitario.toFixed(2)}</td>
+                <td className="px-4 py-2 text-right font-mono">
+                  ${item.precio_unitario.toFixed(2)}
+                  {item.unidad_venta === 'KILO' ? '/kg' : '/u'}
+                </td>
                 <td className="px-4 py-2 text-right font-mono">${calcularSubtotal(item).toFixed(2)}</td>
                 <td className="px-4 py-2 text-right">
                   <button
@@ -285,7 +297,7 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
             {items.length === 0 && (
               <tr>
                 <td colSpan={6} className="px-4 py-8 text-center text-neutral-400">
-                  Sin ítems. Presioná F1 para abrir el catálogo de hierros.
+                  Sin ítems. Presioná F1 para abrir el catálogo de productos.
                 </td>
               </tr>
             )}
@@ -311,7 +323,7 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
       )}
 
       {catalogoAbierto && (
-        <CatalogoMateriales
+        <CatalogoProductos
           onSeleccionar={(item) => {
             setItems((prev) => [...prev, item]);
             setCatalogoAbierto(false);
@@ -320,7 +332,7 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
       )}
 
       {rendicionAbierta && cliente && (
-        <RendicionPago total={total} clienteId={cliente.id_cliente} items={items} onExito={onFacturado} />
+        <RendicionPago total={total} clienteId={cliente.id_cliente} items={items.map(aItemInput)} onExito={onFacturado} />
       )}
 
       {crearClienteAbierto && (

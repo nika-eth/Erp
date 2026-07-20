@@ -74,10 +74,10 @@ export function Comprobante({ documento, cliente, sucursalNombre, pagos, saldoPe
       <table className="mb-4 w-full select-text border-collapse text-left">
         <thead>
           <tr className="border-b border-neutral-400">
-            <th className="py-1">Material</th>
+            <th className="py-1">Producto</th>
             <th className="py-1 text-right">Cantidad</th>
             <th className="py-1 text-right">Kilos</th>
-            <th className="py-1 text-right">Precio/kg</th>
+            <th className="py-1 text-right">Precio</th>
             <th className="py-1 text-right">Subtotal</th>
           </tr>
         </thead>
@@ -87,7 +87,10 @@ export function Comprobante({ documento, cliente, sucursalNombre, pagos, saldoPe
               <td className="py-1">{item.descripcion}</td>
               <td className="py-1 text-right">{item.cantidad}</td>
               <td className="py-1 text-right">{item.kilos.toFixed(2)}</td>
-              <td className="py-1 text-right">${item.precio_unitario.toFixed(2)}</td>
+              <td className="py-1 text-right">
+                ${item.precio_unitario.toFixed(2)}
+                {item.unidad_venta === 'KILO' ? '/kg' : '/u'}
+              </td>
               <td className="py-1 text-right">${item.subtotal.toFixed(2)}</td>
             </tr>
           ))}

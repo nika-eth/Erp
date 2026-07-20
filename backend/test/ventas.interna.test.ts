@@ -17,19 +17,23 @@ const CLIENTE = {
 
 const CUENTAS_EMPRESA: Record<number, string> = { 1: 'Efectivo' };
 
-const ITEM = {
-  id_material: 'HRA-12',
+const PRODUCTO_HIERRO = {
+  id_producto: 1,
+  sku: 'HRA-12',
   descripcion: 'Hierro Redondo Aletado 12mm',
-  cantidad: 10,
-  peso_teorico_kg: 0.888,
-  precio_unitario: 1200,
+  unidad_venta: 'KILO',
+  peso_teorico_kg: '0.888',
+  activo: true,
 };
+
+const ITEM = { id_producto: 1, cantidad: 10, precio_unitario: 1200 };
 // total = 10656
 
 function handlerFeliz() {
   let ultimoDocumento: Record<string, unknown> | null = null;
 
   return (sql: string, params: unknown[]): MockQueryResult => {
+    if (/FROM productos WHERE id_producto = ANY/.test(sql)) return { rows: [PRODUCTO_HIERRO] };
     if (/FROM clientes WHERE id_cliente/.test(sql)) return { rows: [CLIENTE] };
     if (/FROM cuentas_empresa WHERE id_cuenta = ANY/.test(sql)) {
       const ids = params[0] as number[];
