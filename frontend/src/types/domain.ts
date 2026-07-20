@@ -73,10 +73,13 @@ export interface FichaCuentaCorriente {
   saldo_total: string;
 }
 
-export interface SesionUsuario {
-  id_sucursal: number;
+/** Payload del JWT: `id_sucursal` viaja firmado, no lo elige quien loguea. */
+export interface UserPayload {
+  id_usuario: number;
+  usuario: string;
+  nombre: string;
   rol: Rol;
-  vendedor: string;
+  id_sucursal: number;
 }
 
 export interface PagoInput {
@@ -103,6 +106,7 @@ export interface FacturarVentaResult {
   documento: Documento;
   saldo_pendiente: number;
   movimientos: MovimientoCuentaCorriente[];
+  autorizacion?: { supervisor: string; monto_excedido: number };
 }
 
 // -----------------------------------------------------------------------

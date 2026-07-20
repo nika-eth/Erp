@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import { asyncHandler } from '../middleware/asyncHandler';
-import { requireSession } from '../middleware/session';
+import { authenticateJWT } from '../middleware/auth';
+import { verifySupervisorOverride } from '../middleware/supervisorOverride';
 import { postFacturarVenta, postGuardarPresupuesto } from '../controllers/ventas.controller';
 
 export const ventasRouter = Router();
 
-ventasRouter.use(requireSession);
+ventasRouter.use(authenticateJWT);
 
-ventasRouter.post('/facturar', asyncHandler(postFacturarVenta));
+ventasRouter.post('/facturar', asyncHandler(verifySupervisorOverride), asyncHandler(postFacturarVenta));
 ventasRouter.post('/presupuesto', asyncHandler(postGuardarPresupuesto));

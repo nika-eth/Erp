@@ -35,7 +35,7 @@ export async function getOcupacionDiaria(req: Request, res: Response): Promise<v
  * dentro de una única transacción. Devuelve 409 si no hay cupo.
  */
 export async function postAsignarEnvio(req: Request, res: Response): Promise<void> {
-  if (!req.sesion) {
+  if (!req.user) {
     throw AppError.unauthorized();
   }
 

@@ -1,43 +1,65 @@
+import bcrypt from 'bcryptjs';
 import type { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env';
 import { pool } from '../config/db';
 import { AppError } from '../utils/AppError';
-import { esRolValido } from '../middleware/session';
-import type { Sucursal } from '../types/domain';
+import { buscarUsuarioPorUsuario } from '../services/usuarios.service';
+import type { Sucursal, UserPayload } from '../types/domain';
 
 /**
  * POST /api/auth/login
  *
- * El modelo de datos provisto no incluye una tabla `usuarios`, así que este
- * endpoint no valida contraseña: emite el JWT de sesión a partir de la
- * sucursal, el rol y el nombre de vendedor elegidos al iniciar el turno.
- * Reemplazar por un flujo de credenciales reales en cuanto exista esa tabla.
+ * Autenticación real contra la tabla `usuarios`. La sucursal del usuario
+ * (`usuarios.id_sucursal`) viaja firmada dentro del JWT: no la elige quien
+ * inicia sesión, para que no se pueda facturar a nombre de otra sucursal
+ * manipulando el request.
  */
 export async function postLogin(req: Request, res: Response): Promise<void> {
-  const { id_sucursal, rol, vendedor } = req.body as {
-    id_sucursal?: number;
-    rol?: string;
-    vendedor?: string;
-  };
+  const { usuario, password } = req.body as { usuario?: string; password?: string };
 
-  if (!Number.isInteger(id_sucursal) || !esRolValido(rol) || !vendedor?.trim()) {
+  if (!usuario?.trim() || !password) {
+    throw AppError.badRequest('PAYLOAD_INVALIDO', 'usuario y password son requeridos.');
+  }
+
+  // Mensaje idéntico ante usuario inexistente o password incorrecta, para no
+  // filtrar qué usuarios existen.
+  const credencialesInvalidas = () => AppError.unauthorized('Usuario o contraseña incorrectos.');
+
+  const fila = await buscarUsuarioPorUsuario(usuario);
+  if (!fila) {
+    throw credencialesInvalidas();
+  }
+
+  const passwordValida = await bcrypt.compare(password, fila.password_hash);
+  if (!passwordValida) {
+    throw credencialesInvalidas();
+  }
+
+  if (!fila.id_sucursal) {
     throw AppError.badRequest(
-      'PAYLOAD_INVALIDO',
-      'id_sucursal (entero), rol (ADMIN|SUPERVISOR|VENDEDOR) y vendedor son requeridos.',
+      'USUARIO_SIN_SUCURSAL',
+      `El usuario "${fila.usuario}" no tiene una sucursal asignada; no puede operar el mostrador.`,
     );
   }
 
-  const { rows } = await pool.query<Sucursal>(`SELECT id_sucursal, nombre FROM sucursales WHERE id_sucursal = $1`, [
-    id_sucursal,
-  ]);
-  const sucursal = rows[0];
+  const { rows: sucursalRows } = await pool.query<Sucursal>(
+    `SELECT id_sucursal, nombre FROM sucursales WHERE id_sucursal = $1`,
+    [fila.id_sucursal],
+  );
+  const sucursal = sucursalRows[0];
   if (!sucursal) {
-    throw AppError.badRequest('SUCURSAL_INVALIDA', `No existe la sucursal id_sucursal=${id_sucursal}`);
+    throw AppError.badRequest('SUCURSAL_INVALIDA', `La sucursal asignada al usuario ya no existe.`);
   }
 
-  const sesion = { id_sucursal: sucursal.id_sucursal, rol, vendedor: vendedor.trim() };
-  const token = jwt.sign(sesion, env.jwt.secret, { expiresIn: env.jwt.expiresIn } as jwt.SignOptions);
+  const payload: UserPayload = {
+    id_usuario: fila.id_usuario,
+    usuario: fila.usuario,
+    nombre: fila.nombre,
+    rol: fila.rol,
+    id_sucursal: fila.id_sucursal,
+  };
+  const token = jwt.sign(payload, env.jwt.secret, { expiresIn: env.jwt.expiresIn } as jwt.SignOptions);
 
-  res.json({ token, sesion, sucursal });
+  res.json({ token, user: payload, sucursal });
 }

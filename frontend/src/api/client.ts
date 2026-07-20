@@ -31,6 +31,8 @@ interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
   body?: unknown;
   auth?: boolean;
+  /** Headers adicionales, ej. `x-supervisor-pin` en el override de crédito. */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -38,9 +40,9 @@ interface RequestOptions {
  * indique `auth: false` (usado por `/auth/login` y catálogos públicos).
  */
 export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = 'GET', body, auth = true } = options;
+  const { method = 'GET', body, auth = true, headers: headersExtra } = options;
 
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', ...headersExtra };
   if (auth) {
     const token = getToken();
     if (token) headers.Authorization = `Bearer ${token}`;

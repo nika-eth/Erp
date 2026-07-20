@@ -4,6 +4,7 @@ import { listarCuentasEmpresa } from '../../../api/catalogos';
 import { facturarVenta } from '../../../api/ventas';
 import { useGlobalHotkeys } from '../../../hooks/useGlobalHotkeys';
 import { Modal } from '../../common/Modal';
+import { PinInput } from '../../common/PinInput';
 import type { CuentaEmpresa, FacturarVentaResult, ItemInput, PagoInput } from '../../../types/domain';
 
 interface RendicionPagoProps {
@@ -28,6 +29,8 @@ export function RendicionPago({ total, clienteId, items, onExito }: RendicionPag
   const [monto, setMonto] = useState('');
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mostrarAutorizacion, setMostrarAutorizacion] = useState(false);
+  const [pin, setPin] = useState('');
 
   const inputFiltroRef = useRef<HTMLInputElement>(null);
   const inputMontoRef = useRef<HTMLInputElement>(null);
@@ -87,23 +90,50 @@ export function RendicionPago({ total, clienteId, items, onExito }: RendicionPag
     }
   }
 
-  async function confirmarFacturacion(): Promise<void> {
-    if (pagos.length === 0 || enviando) return;
+  async function enviarFacturacion(pinSupervisor?: string): Promise<void> {
+    if (enviando) return;
     setEnviando(true);
     setError(null);
     try {
-      const resultado = await facturarVenta({ cliente_id: clienteId, items, total_neto: total, pagos });
+      const resultado = await facturarVenta({ cliente_id: clienteId, items, total_neto: total, pagos }, pinSupervisor);
       onExito(resultado);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Error inesperado al facturar la venta.');
+      if (err instanceof ApiError && err.code === 'LIMITE_CREDITO_EXCEDIDO') {
+        // El límite se evalúa sobre el DEBE bruto de la venta, sin importar
+        // cuánto se haya cargado en `pagos`: agregar más pagos acá no lo
+        // resuelve. La única salida es la autorización de un supervisor.
+        setMostrarAutorizacion(true);
+        setError(err.message);
+      } else if (err instanceof ApiError && err.code === 'PIN_SUPERVISOR_INVALIDO') {
+        setError(err.message);
+        setPin('');
+      } else {
+        setError(err instanceof ApiError ? err.message : 'Error inesperado al facturar la venta.');
+      }
     } finally {
       setEnviando(false);
     }
   }
 
+  function confirmarFacturacion(): void {
+    if (pagos.length === 0) return;
+    void enviarFacturacion();
+  }
+
+  function onPinCompleto(pinCompleto: string): void {
+    void enviarFacturacion(pinCompleto);
+  }
+
+  function cancelarAutorizacion(): void {
+    setMostrarAutorizacion(false);
+    setError(null);
+    setPin('');
+  }
+
   // F12 dentro de este modal confirma la facturación (distinto del F12 que
-  // abre el modal desde Carga Unificada).
-  useGlobalHotkeys({ F12: () => void confirmarFacturacion() }, !cuentaSeleccionada);
+  // abre el modal desde Carga Unificada). Se desactiva mientras se está
+  // esperando el PIN del supervisor, para no reintentar sin PIN por error.
+  useGlobalHotkeys({ F12: confirmarFacturacion }, !cuentaSeleccionada && !mostrarAutorizacion);
 
   return (
     <Modal titulo="Rendición de Pago Mixto (F12 confirma)" ancho="lg">
@@ -133,7 +163,7 @@ export function RendicionPago({ total, clienteId, items, onExito }: RendicionPag
         ))}
       </ul>
 
-      {restante > 0 && !cuentaSeleccionada && (
+      {!mostrarAutorizacion && restante > 0 && !cuentaSeleccionada && (
         <input
           ref={inputFiltroRef}
           value={filtro}
@@ -147,7 +177,7 @@ export function RendicionPago({ total, clienteId, items, onExito }: RendicionPag
         />
       )}
 
-      {!cuentaSeleccionada && restante > 0 && (
+      {!mostrarAutorizacion && !cuentaSeleccionada && restante > 0 && (
         <ul className="max-h-40 overflow-y-auto text-sm">
           {cuentasFiltradas.map((c, i) => (
             <li
@@ -160,7 +190,7 @@ export function RendicionPago({ total, clienteId, items, onExito }: RendicionPag
         </ul>
       )}
 
-      {cuentaSeleccionada && (
+      {!mostrarAutorizacion && cuentaSeleccionada && (
         <label className="block text-sm">
           <span className="mb-1 block text-neutral-600">Monto en {cuentaSeleccionada.nombre_cuenta}</span>
           <input
@@ -179,8 +209,25 @@ export function RendicionPago({ total, clienteId, items, onExito }: RendicionPag
 
       {error && <p className="mt-4 rounded bg-red-50 px-3 py-2 text-sm text-peligro">{error}</p>}
 
+      {mostrarAutorizacion && (
+        <div className="mt-4 rounded border border-amber-300 bg-amber-50 p-4">
+          <p className="mb-3 text-sm font-medium text-amber-900">
+            Autorizar con PIN de Supervisor para facturar de todos modos
+          </p>
+          <PinInput value={pin} onChange={setPin} onComplete={onPinCompleto} disabled={enviando} autoFocus />
+          <button
+            type="button"
+            tabIndex={-1}
+            onClick={cancelarAutorizacion}
+            className="mt-3 text-xs text-neutral-500 hover:text-neutral-700"
+          >
+            ‹ volver a la rendición de pago
+          </button>
+        </div>
+      )}
+
       <p className="mt-4 text-xs text-neutral-400">
-        {enviando ? 'Facturando…' : 'F12 confirma la facturación · Esc cancela'}
+        {enviando ? 'Facturando…' : mostrarAutorizacion ? 'Esc cancela' : 'F12 confirma la facturación · Esc cancela'}
       </p>
     </Modal>
   );

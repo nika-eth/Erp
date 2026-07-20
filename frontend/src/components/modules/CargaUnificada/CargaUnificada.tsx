@@ -3,7 +3,7 @@ import { ApiError } from '../../../api/client';
 import { buscarClientePorIdentificacion } from '../../../api/clientes';
 import { guardarPresupuesto as guardarPresupuestoApi } from '../../../api/ventas';
 import { Comprobante, type ComprobanteProps } from '../../common/Comprobante';
-import { useSession } from '../../../context/SessionContext';
+import { useAuth } from '../../../context/AuthContext';
 import { useGlobalHotkeys } from '../../../hooks/useGlobalHotkeys';
 import type { Cliente, FacturarVentaResult, ItemInput, TipoDocumento } from '../../../types/domain';
 import { CatalogoMateriales } from './CatalogoMateriales';
@@ -20,7 +20,7 @@ function calcularSubtotal(item: ItemInput): number {
 }
 
 export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Element {
-  const { sucursal } = useSession();
+  const { sucursal } = useAuth();
   const [cuitDniInput, setCuitDniInput] = useState('');
   const [cliente, setCliente] = useState<Cliente | null>(null);
   const [tipoDocumento, setTipoDocumento] = useState<TipoDocumento | null>(null);
@@ -114,7 +114,10 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
     setRendicionAbierta(false);
     setMensaje(
       `${ETIQUETA_TIPO[resultado.documento.tipo_documento]} · Remito ${resultado.documento.nro_remito} · ` +
-        `Saldo pendiente: $${resultado.saldo_pendiente.toFixed(2)}`,
+        `Saldo pendiente: $${resultado.saldo_pendiente.toFixed(2)}` +
+        (resultado.autorizacion
+          ? ` · Autorizado por ${resultado.autorizacion.supervisor} (excedía $${resultado.autorizacion.monto_excedido.toFixed(2)})`
+          : ''),
     );
     setComprobante({
       documento: resultado.documento,

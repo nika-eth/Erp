@@ -73,25 +73,43 @@ async function obtenerCuentasEmpresa(ids: number[], client: PoolClient): Promise
   return mapa;
 }
 
+export interface ContextoFacturacion {
+  id_sucursal: number;
+  id_usuario: number;
+}
+
+/** Ver `verifySupervisorOverride`: presente cuando un supervisor autorizó saltear el límite de crédito. */
+export interface SupervisorAutorizacion {
+  id_supervisor: number;
+  nombreSupervisor: string;
+}
+
 /**
  * Procesa una venta completa: cabecera del documento + desglose de pago
  * mixto en cuenta_corriente, dentro de una única transacción.
  *
  * Orden de operaciones (importa para que los triggers de Postgres se
  * disparen correctamente):
+ *   0. Si `supervisorAutorizacion` está presente, `SET LOCAL
+ *      app.allow_credit_override = 'true'` — sólo vale dentro de esta
+ *      transacción — para que el trigger de límite de crédito lo salte.
  *   1. INSERT en `documentos`      -> dispara el trigger que asigna nro_remito
  *      (bloquea sucursales_secuencias con ON CONFLICT DO UPDATE).
  *   2. INSERT del DEBE en `cuenta_corriente` por el total de la venta
- *      -> dispara el trigger que valida limite_credito. Si lo excede,
- *      Postgres aborta la transacción entera (incluido el paso 1) y el
- *      catch de más abajo hace ROLLBACK; el controller traduce el error
- *      del trigger a un 422 con código LIMITE_CREDITO_EXCEDIDO.
- *   3. INSERT de un HABER en `cuenta_corriente` por cada medio de pago
+ *      -> dispara el trigger que valida limite_credito. Si lo excede y no
+ *      hubo override, Postgres aborta la transacción entera (incluido el
+ *      paso 1) y el catch de más abajo hace ROLLBACK; el controller
+ *      traduce el error del trigger a un 422 con código
+ *      LIMITE_CREDITO_EXCEDIDO.
+ *   3. Si hubo override, INSERT en `auditoria_autorizaciones` dejando
+ *      registrado qué supervisor autorizó y por cuánto se excedía.
+ *   4. INSERT de un HABER en `cuenta_corriente` por cada medio de pago
  *      cargado por el vendedor.
  */
 export async function facturarVenta(
-  id_sucursal: number,
+  contexto: ContextoFacturacion,
   input: FacturarVentaInput,
+  supervisorAutorizacion?: SupervisorAutorizacion | null,
 ): Promise<FacturarVentaResult> {
   validarPayload(input);
 
@@ -108,6 +126,10 @@ export async function facturarVenta(
   }
 
   return withTransaction(async (client) => {
+    if (supervisorAutorizacion) {
+      await client.query(`SET LOCAL app.allow_credit_override = 'true'`);
+    }
+
     const cuentasEmpresa = await obtenerCuentasEmpresa(
       input.pagos.map((p) => p.id_cuenta),
       client,
@@ -117,9 +139,19 @@ export async function facturarVenta(
       `INSERT INTO documentos (id_sucursal_origen, fecha, cliente_id, total_neto, tipo_documento, items, id_zona)
        VALUES ($1, NOW(), $2, $3, $4, $5::jsonb, $6)
        RETURNING id_documento, id_sucursal_origen, nro_remito, fecha, cliente_id, total_neto, tipo_documento, items, id_zona`,
-      [id_sucursal, input.cliente_id, totalNeto, tipo_documento, JSON.stringify(items), cliente.id_zona],
+      [contexto.id_sucursal, input.cliente_id, totalNeto, tipo_documento, JSON.stringify(items), cliente.id_zona],
     );
     const documento = documentoRows[0];
+
+    let montoExcedido = 0;
+    if (supervisorAutorizacion) {
+      const { rows: saldoRows } = await client.query<{ saldo: string }>(
+        `SELECT COALESCE(SUM(debe) - SUM(haber), 0) AS saldo FROM cuenta_corriente WHERE cliente_id = $1`,
+        [input.cliente_id],
+      );
+      const saldoActual = Number(saldoRows[0].saldo);
+      montoExcedido = redondearMoneda(Math.max(0, saldoActual + totalNeto - Number(cliente.limite_credito)));
+    }
 
     const movimientos: MovimientoCuentaCorriente[] = [];
 
@@ -135,6 +167,14 @@ export async function facturarVenta(
       ],
     );
     movimientos.push(debeRows[0]);
+
+    if (supervisorAutorizacion) {
+      await client.query(
+        `INSERT INTO auditoria_autorizaciones (id_usuario_vendedor, id_supervisor, id_cliente, monto_excedido, fecha)
+         VALUES ($1, $2, $3, $4, NOW())`,
+        [contexto.id_usuario, supervisorAutorizacion.id_supervisor, input.cliente_id, montoExcedido],
+      );
+    }
 
     for (const pago of input.pagos) {
       const cuenta = cuentasEmpresa.get(pago.id_cuenta)!;
@@ -157,6 +197,9 @@ export async function facturarVenta(
       documento,
       saldo_pendiente: redondearMoneda(totalNeto - totalPagos),
       movimientos,
+      autorizacion: supervisorAutorizacion
+        ? { supervisor: supervisorAutorizacion.nombreSupervisor, monto_excedido: montoExcedido }
+        : undefined,
     };
   });
 }

@@ -1,4 +1,4 @@
-import { useSession } from '../../context/SessionContext';
+import { useAuth } from '../../context/AuthContext';
 
 const ETIQUETAS_MODULO: Record<string, string> = {
   PUNTO_MUERTO: 'Punto Muerto',
@@ -9,7 +9,7 @@ const ETIQUETAS_MODULO: Record<string, string> = {
 };
 
 export function Header({ moduloActivo }: { moduloActivo: string }): JSX.Element {
-  const { sesion, sucursal, cerrarSesion } = useSession();
+  const { user, sucursal, cerrarSesion } = useAuth();
 
   return (
     <header className="flex items-center justify-between border-b border-neutral-200 bg-white px-6 py-3">
@@ -24,7 +24,7 @@ export function Header({ moduloActivo }: { moduloActivo: string }): JSX.Element 
         <div className="text-right">
           <div className="font-medium text-neutral-900">{sucursal?.nombre ?? '—'}</div>
           <div className="text-xs text-neutral-500">
-            {sesion?.vendedor} · {sesion?.rol}
+            {user?.nombre} · {user?.rol}
           </div>
         </div>
         <button
