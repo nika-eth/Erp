@@ -23,7 +23,7 @@ function documentoFacturado(overrides: Partial<{ id_zona: number | null; tipo_do
     id_documento: 50,
     nro_remito: 10,
     tipo_documento: overrides.tipo_documento ?? 'FACTURA_A',
-    items: [{ id_material: 'X', descripcion: 'Item', cantidad: 1, peso_teorico_kg: kilos, kilos, precio_unitario: 100, subtotal: 100 }],
+    kilos_totales: String(kilos),
     id_zona: 'id_zona' in overrides ? overrides.id_zona : ZONA_CERCANA.id_zona,
     cliente_nombre: 'Cliente Test',
   };

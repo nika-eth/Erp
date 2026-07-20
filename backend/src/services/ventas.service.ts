@@ -104,6 +104,27 @@ function calcularItems(input: ItemInput[], productos: Map<number, Producto>): { 
   return { items, totalNeto };
 }
 
+/** Una fila por ítem en `documentos_detalles` (ver `sql/009_documentos_detalles.sql`). */
+async function insertarDetalles(client: PoolClient, id_documento: number, items: ItemDocumento[]): Promise<void> {
+  for (const item of items) {
+    await client.query(
+      `INSERT INTO documentos_detalles (id_documento, id_producto, sku, descripcion, unidad_venta, cantidad, peso_teorico_kg, precio_unitario, subtotal)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        id_documento,
+        item.id_producto,
+        item.sku,
+        item.descripcion,
+        item.unidad_venta,
+        item.cantidad,
+        item.peso_teorico_kg,
+        item.precio_unitario,
+        item.subtotal,
+      ],
+    );
+  }
+}
+
 async function obtenerCuentasEmpresa(ids: number[], client: PoolClient): Promise<Map<number, CuentaEmpresa>> {
   const { rows } = await client.query<CuentaEmpresa>(
     `SELECT id_cuenta, nombre_cuenta FROM cuentas_empresa WHERE id_cuenta = ANY($1::int[])`,
@@ -192,15 +213,14 @@ export async function facturarVenta(
     const estadoAfipInicial: EstadoAfip = esFiscal ? 'PENDIENTE' : 'APROBADO_INTERNO';
 
     const { rows: documentoRows } = await client.query<Documento>(
-      `INSERT INTO documentos (id_sucursal_origen, fecha, cliente_id, total_neto, tipo_documento, items, id_zona, es_fiscal, tipo_comprobante, punto_venta, estado_afip)
-       VALUES ($1, NOW(), $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10)
+      `INSERT INTO documentos (id_sucursal_origen, fecha, cliente_id, total_neto, tipo_documento, id_zona, es_fiscal, tipo_comprobante, punto_venta, estado_afip)
+       VALUES ($1, NOW(), $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING ${DOCUMENTO_COLUMNAS}`,
       [
         contexto.id_sucursal,
         input.cliente_id,
         totalNeto,
         tipo_documento,
-        JSON.stringify(items),
         cliente.id_zona,
         esFiscal,
         tipoComprobante,
@@ -208,7 +228,8 @@ export async function facturarVenta(
         estadoAfipInicial,
       ],
     );
-    let documento = documentoRows[0];
+    let documento: Documento = { ...documentoRows[0], items };
+    await insertarDetalles(client, documento.id_documento, items);
 
     let montoExcedido = 0;
     if (supervisorAutorizacion) {
@@ -289,14 +310,14 @@ export async function facturarVenta(
            WHERE id_documento = $3 RETURNING ${DOCUMENTO_COLUMNAS}`,
           [resultadoAfip.cae, resultadoAfip.caeVencimiento, documento.id_documento],
         );
-        documento = rows[0];
+        documento = { ...rows[0], items };
       } else {
         const { rows } = await client.query<Documento>(
           `UPDATE documentos SET estado_afip = $1, error_afip_mensaje = $2
            WHERE id_documento = $3 RETURNING ${DOCUMENTO_COLUMNAS}`,
           [resultadoAfip.tipo, resultadoAfip.mensaje, documento.id_documento],
         );
-        documento = rows[0];
+        documento = { ...rows[0], items };
         if (resultadoAfip.tipo === 'CONTINGENCIA') {
           await encolarContingencia(client, documento.id_documento);
         }
@@ -315,11 +336,13 @@ export async function facturarVenta(
 }
 
 /**
- * Guarda un Presupuesto: sólo cabecera en `documentos`, sin movimientos en
- * cuenta_corriente. Según la regla de negocio, el presupuesto no viaja a
- * AFIP, no descuenta stock y no debería consumir la numeración correlativa
- * de remitos de venta (eso depende de cómo el trigger de la base trate el
- * `tipo_documento = 'PRESUPUESTO'` sobre `sucursales_secuencias`).
+ * Guarda un Presupuesto: sólo cabecera en `documentos` + sus ítems en
+ * `documentos_detalles`, sin movimientos en cuenta_corriente. Según la
+ * regla de negocio, el presupuesto no viaja a AFIP, no descuenta stock y no
+ * debería consumir la numeración correlativa de remitos de venta (eso
+ * depende de cómo el trigger de la base trate el `tipo_documento =
+ * 'PRESUPUESTO'` sobre `sucursales_secuencias`). Transaccional porque ahora
+ * son dos tablas (cabecera + detalle), no un solo INSERT atómico.
  */
 export async function guardarPresupuesto(
   id_sucursal: number,
@@ -332,11 +355,15 @@ export async function guardarPresupuesto(
   const productos = await obtenerProductos(input.items.map((i) => i.id_producto));
   const { items, totalNeto } = calcularItems(input.items, productos);
 
-  const { rows } = await pool.query<Documento>(
-    `INSERT INTO documentos (id_sucursal_origen, fecha, cliente_id, total_neto, tipo_documento, items)
-     VALUES ($1, NOW(), $2, $3, 'PRESUPUESTO', $4::jsonb)
-     RETURNING ${DOCUMENTO_COLUMNAS}`,
-    [id_sucursal, input.cliente_id, totalNeto, JSON.stringify(items)],
-  );
-  return rows[0];
+  return withTransaction(async (client) => {
+    const { rows } = await client.query<Documento>(
+      `INSERT INTO documentos (id_sucursal_origen, fecha, cliente_id, total_neto, tipo_documento)
+       VALUES ($1, NOW(), $2, $3, 'PRESUPUESTO')
+       RETURNING ${DOCUMENTO_COLUMNAS}`,
+      [id_sucursal, input.cliente_id, totalNeto],
+    );
+    const documento: Documento = { ...rows[0], items };
+    await insertarDetalles(client, documento.id_documento, items);
+    return documento;
+  });
 }

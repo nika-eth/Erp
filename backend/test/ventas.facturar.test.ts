@@ -73,8 +73,11 @@ function handlerFeliz(cliente: typeof CLIENTE_CUIT | typeof CLIENTE_DNI) {
       const ids = params[0] as number[];
       return { rows: ids.filter((id) => id in CUENTAS_EMPRESA).map((id) => ({ id_cuenta: id, nombre_cuenta: CUENTAS_EMPRESA[id] })) };
     }
-    if (/INSERT INTO documentos/.test(sql)) {
-      const [id_sucursal_origen, cliente_id, total_neto, tipo_documento, items, id_zona, es_fiscal, tipo_comprobante, punto_venta, estado_afip] =
+    if (/INSERT INTO documentos_detalles/.test(sql)) {
+      return { rows: [] };
+    }
+    if (/INSERT INTO documentos\s*\(/.test(sql)) {
+      const [id_sucursal_origen, cliente_id, total_neto, tipo_documento, id_zona, es_fiscal, tipo_comprobante, punto_venta, estado_afip] =
         params;
       ultimoDocumento = {
         id_documento: siguienteIdDocumento++,
@@ -84,7 +87,6 @@ function handlerFeliz(cliente: typeof CLIENTE_CUIT | typeof CLIENTE_DNI) {
         cliente_id,
         total_neto: String(total_neto),
         tipo_documento,
-        items: JSON.parse(items as string),
         id_zona,
         es_fiscal,
         tipo_comprobante,
@@ -187,8 +189,9 @@ describe('POST /api/ventas/facturar', () => {
       if (/FROM cuentas_empresa WHERE id_cuenta = ANY/.test(sql)) {
         return { rows: [{ id_cuenta: 1, nombre_cuenta: 'Efectivo' }] };
       }
-      if (/INSERT INTO documentos/.test(sql)) {
-        const [id_sucursal_origen, cliente_id, total_neto, tipo_documento, items] = params;
+      if (/INSERT INTO documentos_detalles/.test(sql)) return { rows: [] };
+      if (/INSERT INTO documentos\s*\(/.test(sql)) {
+        const [id_sucursal_origen, cliente_id, total_neto, tipo_documento] = params;
         ultimoDocumento = {
           id_documento: siguienteIdDocumento++,
           id_sucursal_origen,
@@ -197,7 +200,6 @@ describe('POST /api/ventas/facturar', () => {
           cliente_id,
           total_neto: String(total_neto),
           tipo_documento,
-          items: JSON.parse(items as string),
           estado_afip: 'PENDIENTE',
         };
         return { rows: [ultimoDocumento] };
@@ -257,8 +259,9 @@ describe('POST /api/ventas/facturar', () => {
         const ids = params[0] as number[];
         return { rows: ids.map((id) => ({ id_cuenta: id, nombre_cuenta: CUENTAS_EMPRESA[id] })) };
       }
-      if (/INSERT INTO documentos/.test(sql)) {
-        return { rows: [{ id_documento: 999, id_sucursal_origen: 1, nro_remito: 1, fecha: new Date().toISOString(), cliente_id: CLIENTE_CUIT.id_cliente, total_neto: '10656', tipo_documento: 'FACTURA_A', items: [] }] };
+      if (/INSERT INTO documentos_detalles/.test(sql)) return { rows: [] };
+      if (/INSERT INTO documentos\s*\(/.test(sql)) {
+        return { rows: [{ id_documento: 999, id_sucursal_origen: 1, nro_remito: 1, fecha: new Date().toISOString(), cliente_id: CLIENTE_CUIT.id_cliente, total_neto: '10656', tipo_documento: 'FACTURA_A' }] };
       }
       if (/INSERT INTO cuenta_corriente/.test(sql) && params.length === 4) {
         const err = new Error('Limite de credito excedido para el cliente 1') as Error & { code: string };

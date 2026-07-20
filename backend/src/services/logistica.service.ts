@@ -7,7 +7,6 @@ import type {
   CamionJornada,
   DocumentoPendiente,
   EnvioAsignado,
-  ItemDocumento,
   Zona,
 } from '../types/domain';
 
@@ -35,10 +34,11 @@ export async function listarDocumentosPendientes(): Promise<DocumentoPendiente[]
     cliente: string;
     zona: string | null;
     casilleros_requeridos: number | null;
-    items: ItemDocumento[];
+    kilos_totales: string;
   }>(
     `SELECT d.id_documento, d.nro_remito, cl.nombre AS cliente, z.nombre AS zona,
-            z.casilleros_requeridos, d.items
+            z.casilleros_requeridos,
+            COALESCE((SELECT SUM(dd.cantidad * dd.peso_teorico_kg) FROM documentos_detalles dd WHERE dd.id_documento = d.id_documento), 0) AS kilos_totales
      FROM documentos d
      JOIN clientes cl ON cl.id_cliente = d.cliente_id
      LEFT JOIN zonas z ON z.id_zona = d.id_zona
@@ -54,7 +54,7 @@ export async function listarDocumentosPendientes(): Promise<DocumentoPendiente[]
     cliente: r.cliente,
     zona: r.zona,
     casillerosRequeridos: r.casilleros_requeridos,
-    kilosTotales: redondearMoneda(r.items.reduce((acc, i) => acc + i.kilos, 0)),
+    kilosTotales: redondearMoneda(Number(r.kilos_totales)),
   }));
 }
 
@@ -153,11 +153,12 @@ export async function asignarEnvio(input: AsignarEnvioInput): Promise<EnvioAsign
       id_documento: number;
       nro_remito: number | null;
       tipo_documento: string;
-      items: ItemDocumento[];
+      kilos_totales: string;
       id_zona: number | null;
       cliente_nombre: string;
     }>(
-      `SELECT d.id_documento, d.nro_remito, d.tipo_documento, d.items, d.id_zona, cl.nombre AS cliente_nombre
+      `SELECT d.id_documento, d.nro_remito, d.tipo_documento, d.id_zona, cl.nombre AS cliente_nombre,
+              COALESCE((SELECT SUM(dd.cantidad * dd.peso_teorico_kg) FROM documentos_detalles dd WHERE dd.id_documento = d.id_documento), 0) AS kilos_totales
        FROM documentos d
        JOIN clientes cl ON cl.id_cliente = d.cliente_id
        WHERE d.id_documento = $1`,
@@ -189,7 +190,7 @@ export async function asignarEnvio(input: AsignarEnvioInput): Promise<EnvioAsign
       throw AppError.badRequest('ZONA_INVALIDA', 'La zona asignada al cliente ya no existe.');
     }
 
-    const kilosTotales = redondearMoneda(documento.items.reduce((acc, i) => acc + i.kilos, 0));
+    const kilosTotales = redondearMoneda(Number(documento.kilos_totales));
 
     const { rows: ocupacionRows } = await client.query<{ casilleros_usados: string; kilos_usados: string }>(
       `SELECT COALESCE(SUM(casilleros_ocupados), 0) AS casilleros_usados,
