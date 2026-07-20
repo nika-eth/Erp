@@ -21,17 +21,43 @@ export interface Sucursal {
   nombre: string;
 }
 
+export type TipoDocumentoCliente = 'DNI' | 'CUIT';
+
+/**
+ * Regla AFIP: un DNI sólo puede ser CONSUMIDOR_FINAL; un CUIT nunca puede
+ * serlo (ver `crearCliente` en `clientes.service.ts`, que valida el cruce).
+ */
+export type CondicionIva = 'CONSUMIDOR_FINAL' | 'RESPONSABLE_INSCRIPTO' | 'MONOTRIBUTO' | 'EXENTO';
+
 export interface Cliente {
   id_cliente: number;
   nombre: string;
-  cuit_dni: string;
+  tipo_documento: TipoDocumentoCliente;
+  numero_documento: string;
+  condicion_iva: CondicionIva;
   limite_credito: string; // NUMERIC llega como string desde pg
   id_zona: number | null;
+  direccion: string | null;
+  telefono: string | null;
+  email: string | null;
 }
 
 export interface CuentaEmpresa {
   id_cuenta: number;
   nombre_cuenta: string;
+}
+
+/** Alta de cliente en mostrador (ver `clientes.service.ts` -> `crearCliente`). */
+export interface CrearClienteInput {
+  nombre: string;
+  tipo_documento: TipoDocumentoCliente;
+  numero_documento: string;
+  condicion_iva: CondicionIva;
+  limite_credito?: number;
+  id_zona?: number | null;
+  direccion?: string | null;
+  telefono?: string | null;
+  email?: string | null;
 }
 
 // -----------------------------------------------------------------------
@@ -107,7 +133,8 @@ export interface MovimientoCuentaCorriente {
 export interface ResumenClienteCuentaCorriente {
   id_cliente: number;
   nombre: string;
-  cuit_dni: string;
+  tipo_documento: TipoDocumentoCliente;
+  numero_documento: string;
   limite_credito: string;
 }
 

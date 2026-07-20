@@ -5,12 +5,8 @@ import { docTipoAfip, TIPO_COMPROBANTE_AFIP, TIPO_COMPROBANTE_REMITO_INTERNO } f
 import { env } from '../config/env';
 import { pool, withTransaction } from '../config/db';
 import { AppError } from '../utils/AppError';
-import {
-  DOCUMENTO_COLUMNAS,
-  ETIQUETA_TIPO_DOCUMENTO,
-  redondearMoneda,
-  tipoDocumentoPorIdentificacion,
-} from '../utils/documento.utils';
+import { DOCUMENTO_COLUMNAS, ETIQUETA_TIPO_DOCUMENTO, redondearMoneda } from '../utils/documento.utils';
+import { tipoDocumentoVentaPorCliente } from '../utils/identificacion.utils';
 import { buscarClientePorId } from './clientes.service';
 import type {
   CuentaEmpresa,
@@ -124,7 +120,7 @@ export async function facturarVenta(
   validarPayload(input);
 
   const cliente = await buscarClientePorId(input.cliente_id);
-  const tipo_documento = tipoDocumentoPorIdentificacion(cliente.cuit_dni);
+  const tipo_documento = tipoDocumentoVentaPorCliente(cliente.tipo_documento);
   const { items, totalNeto } = calcularItems(input.items);
 
   const totalPagos = redondearMoneda(input.pagos.reduce((acc, p) => acc + p.monto, 0));
@@ -237,8 +233,8 @@ export async function facturarVenta(
         id_documento: documento.id_documento,
         puntoVenta: puntoVentaDocumento,
         tipoComprobante,
-        docTipo: docTipoAfip(cliente.cuit_dni),
-        docNro: cliente.cuit_dni.replace(/\D/g, ''),
+        docTipo: docTipoAfip(cliente.tipo_documento),
+        docNro: cliente.numero_documento,
         importeTotal: totalNeto,
         importeNeto: neto,
         importeIva: iva,

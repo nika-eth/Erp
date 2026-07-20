@@ -1,6 +1,6 @@
 import type { PoolClient } from 'pg';
 import { pool } from '../config/db';
-import type { EstadoServicioAfip, TareaColaAfip } from '../types/domain';
+import type { EstadoServicioAfip, TareaColaAfip, TipoDocumentoCliente } from '../types/domain';
 import type { ResultadoSolicitudCae } from './types';
 
 /** Backoff exponencial simple, tope 30 min, para no bombardear a AFIP mientras está caído. */
@@ -24,7 +24,8 @@ export interface TareaConDocumento extends TareaColaAfip {
   tipo_comprobante: number;
   nro_comprobante_afip: number | null;
   total_neto: string;
-  cuit_dni: string;
+  tipo_documento_cliente: TipoDocumentoCliente;
+  numero_documento: string;
 }
 
 /** Toma hasta `limite` tareas vencidas y las marca PROCESANDO en el mismo golpe (`FOR UPDATE SKIP LOCKED`), para permitir más de una instancia del worker sin duplicar trabajo. */
@@ -35,7 +36,7 @@ export async function tomarTareasPendientes(limite = 10): Promise<TareaConDocume
     const { rows } = await client.query<TareaConDocumento>(
       `SELECT t.id_tarea, t.id_documento, t.reintentos, t.proximo_reintento, t.estado, t.ultimo_error,
               d.punto_venta, d.tipo_comprobante, d.nro_comprobante_afip, d.total_neto,
-              cl.cuit_dni
+              cl.tipo_documento AS tipo_documento_cliente, cl.numero_documento
        FROM cola_facturacion_afip t
        JOIN documentos d ON d.id_documento = t.id_documento
        JOIN clientes cl ON cl.id_cliente = d.cliente_id
@@ -69,7 +70,7 @@ export async function tomarTareaPorId(id_tarea: number): Promise<TareaConDocumen
     const { rows } = await client.query<TareaConDocumento>(
       `SELECT t.id_tarea, t.id_documento, t.reintentos, t.proximo_reintento, t.estado, t.ultimo_error,
               d.punto_venta, d.tipo_comprobante, d.nro_comprobante_afip, d.total_neto,
-              cl.cuit_dni
+              cl.tipo_documento AS tipo_documento_cliente, cl.numero_documento
        FROM cola_facturacion_afip t
        JOIN documentos d ON d.id_documento = t.id_documento
        JOIN clientes cl ON cl.id_cliente = d.cliente_id

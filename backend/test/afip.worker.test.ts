@@ -25,7 +25,8 @@ const TAREA_BASE: TareaConDocumento = {
   tipo_comprobante: 6,
   nro_comprobante_afip: null,
   total_neto: '10656',
-  cuit_dni: '30123456',
+  tipo_documento_cliente: 'DNI',
+  numero_documento: '30123456',
 };
 
 /** Registra en un mapa los UPDATE que le van llegando al mock de `pg`, simulando la persistencia mínima que necesita cada test. */

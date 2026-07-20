@@ -133,7 +133,7 @@ export function FichaCuentaCorriente({ onSalir }: { onSalir: () => void }): JSX.
               key={c.id_cliente}
               className={`rounded px-3 py-1.5 ${i === indiceResaltado ? 'bg-acento/10 text-acento' : 'text-neutral-700'}`}
             >
-              {c.nombre} — {c.cuit_dni}
+              {c.nombre} — {c.numero_documento}
             </li>
           ))}
         </ul>
@@ -148,7 +148,7 @@ export function FichaCuentaCorriente({ onSalir }: { onSalir: () => void }): JSX.
             <div>
               <div className="font-medium text-neutral-900">{ficha.cliente.nombre}</div>
               <div className="text-xs text-neutral-500">
-                {ficha.cliente.cuit_dni} · Límite de crédito: ${Number(ficha.cliente.limite_credito).toFixed(2)}
+                {ficha.cliente.numero_documento} · Límite de crédito: ${Number(ficha.cliente.limite_credito).toFixed(2)}
               </div>
             </div>
             <div className="text-right">

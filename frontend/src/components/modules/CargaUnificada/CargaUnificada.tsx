@@ -8,6 +8,7 @@ import { useAuth } from '../../../context/AuthContext';
 import { useGlobalHotkeys } from '../../../hooks/useGlobalHotkeys';
 import type { Cliente, Documento, FacturarVentaResult, ItemInput, TipoDocumento } from '../../../types/domain';
 import { CatalogoMateriales } from './CatalogoMateriales';
+import { CrearCliente } from './CrearCliente';
 import { RendicionPago } from './RendicionPago';
 
 const ETIQUETA_TIPO: Record<TipoDocumento, string> = {
@@ -28,6 +29,8 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
   const [items, setItems] = useState<ItemInput[]>([]);
   const [catalogoAbierto, setCatalogoAbierto] = useState(false);
   const [rendicionAbierta, setRendicionAbierta] = useState(false);
+  const [crearClienteAbierto, setCrearClienteAbierto] = useState(false);
+  const [clienteNoEncontrado, setClienteNoEncontrado] = useState(false);
   const [buscandoCliente, setBuscandoCliente] = useState(false);
   const [guardandoPresupuesto, setGuardandoPresupuesto] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -70,6 +73,7 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
     setCuitDniInput('');
     setCliente(null);
     setTipoDocumento(null);
+    setClienteNoEncontrado(false);
     setItems([]);
     inputClienteRef.current?.focus();
   }
@@ -78,6 +82,7 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
     if (!cuitDniInput.trim() || buscandoCliente) return;
     setBuscandoCliente(true);
     setError(null);
+    setClienteNoEncontrado(false);
     try {
       const { cliente: encontrado, tipo_documento_sugerido } = await buscarClientePorIdentificacion(
         cuitDniInput.trim(),
@@ -87,10 +92,23 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
     } catch (err) {
       setCliente(null);
       setTipoDocumento(null);
-      setError(err instanceof ApiError ? err.message : 'No se pudo buscar el cliente.');
+      if (err instanceof ApiError && err.code === 'CLIENTE_NO_ENCONTRADO') {
+        setClienteNoEncontrado(true);
+        setError('Cliente no encontrado. F6 para darlo de alta.');
+      } else {
+        setError(err instanceof ApiError ? err.message : 'No se pudo buscar el cliente.');
+      }
     } finally {
       setBuscandoCliente(false);
     }
+  }
+
+  function onClienteCreado(nuevoCliente: Cliente): void {
+    setCliente(nuevoCliente);
+    setTipoDocumento(nuevoCliente.tipo_documento === 'CUIT' ? 'FACTURA_A' : 'FACTURA_B');
+    setClienteNoEncontrado(false);
+    setCrearClienteAbierto(false);
+    setMensaje(`Cliente "${nuevoCliente.nombre}" creado.`);
   }
 
   async function guardarPresupuesto(): Promise<void> {
@@ -135,24 +153,41 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
     limpiarFormulario();
   }
 
-  useGlobalHotkeys({
-    F1: () => {
-      if (!cliente) {
-        setError('Ingresá un cliente antes de abrir el catálogo (F1).');
-        return;
-      }
-      setCatalogoAbierto(true);
+  // F1/F2/F12 se desactivan mientras el modal de alta de cliente está
+  // abierto: si no, con `cliente` todavía en null (recién se está cargando)
+  // F12 dispararía "Cargá cliente e ítems..." en carrera con el F12 propio
+  // del modal de alta (que confirma la creación).
+  useGlobalHotkeys(
+    {
+      F1: () => {
+        if (!cliente) {
+          setError('Ingresá un cliente antes de abrir el catálogo (F1).');
+          return;
+        }
+        setCatalogoAbierto(true);
+      },
+      F2: () => void guardarPresupuesto(),
+      F12: () => {
+        if (!cliente || items.length === 0) {
+          setError('Cargá cliente e ítems antes de facturar (F12).');
+          return;
+        }
+        if (!rendicionAbierta) setRendicionAbierta(true);
+      },
     },
-    F2: () => void guardarPresupuesto(),
-    F12: () => {
-      if (!cliente || items.length === 0) {
-        setError('Cargá cliente e ítems antes de facturar (F12).');
-        return;
-      }
-      if (!rendicionAbierta) setRendicionAbierta(true);
+    !crearClienteAbierto,
+  );
+
+  // F6 abre el alta de cliente sólo cuando la búsqueda por CUIT/DNI dio 404.
+  // Escape queda en un grupo aparte, siempre activo, para poder cerrar
+  // cualquier modal abierto sin importar el estado de los demás atajos.
+  useGlobalHotkeys({
+    F6: () => {
+      if (clienteNoEncontrado) setCrearClienteAbierto(true);
     },
     Escape: () => {
-      if (rendicionAbierta) setRendicionAbierta(false);
+      if (crearClienteAbierto) setCrearClienteAbierto(false);
+      else if (rendicionAbierta) setRendicionAbierta(false);
       else if (catalogoAbierto) setCatalogoAbierto(false);
       else onSalir();
     },
@@ -164,7 +199,7 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
   // caracteres dentro del catálogo o la rendición de pago.
   useGlobalHotkeys(
     { Backspace: () => setItems((prev) => prev.slice(0, -1)) },
-    !catalogoAbierto && !rendicionAbierta && items.length > 0,
+    !catalogoAbierto && !rendicionAbierta && !crearClienteAbierto && items.length > 0,
   );
 
   return (
@@ -285,6 +320,10 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
 
       {rendicionAbierta && cliente && (
         <RendicionPago total={total} clienteId={cliente.id_cliente} items={items} onExito={onFacturado} />
+      )}
+
+      {crearClienteAbierto && (
+        <CrearCliente numeroDocumentoInicial={cuitDniInput.trim()} onCreado={onClienteCreado} />
       )}
 
       {comprobante && <Comprobante {...comprobante} />}

@@ -15,11 +15,34 @@ export interface Sucursal {
   nombre: string;
 }
 
+export type TipoDocumentoCliente = 'DNI' | 'CUIT';
+
+/** Regla AFIP: DNI sólo puede ser CONSUMIDOR_FINAL; CUIT nunca puede serlo. */
+export type CondicionIva = 'CONSUMIDOR_FINAL' | 'RESPONSABLE_INSCRIPTO' | 'MONOTRIBUTO' | 'EXENTO';
+
 export interface Cliente {
   id_cliente: number;
   nombre: string;
-  cuit_dni: string;
+  tipo_documento: TipoDocumentoCliente;
+  numero_documento: string;
+  condicion_iva: CondicionIva;
   limite_credito: string;
+  id_zona: number | null;
+  direccion: string | null;
+  telefono: string | null;
+  email: string | null;
+}
+
+export interface CrearClienteInput {
+  nombre: string;
+  tipo_documento: TipoDocumentoCliente;
+  numero_documento: string;
+  condicion_iva: CondicionIva;
+  limite_credito?: number;
+  id_zona?: number | null;
+  direccion?: string;
+  telefono?: string;
+  email?: string;
 }
 
 export interface CuentaEmpresa {
@@ -81,7 +104,8 @@ export interface MovimientoCuentaCorriente {
 export interface ResumenClienteCuentaCorriente {
   id_cliente: number;
   nombre: string;
-  cuit_dni: string;
+  tipo_documento: TipoDocumentoCliente;
+  numero_documento: string;
   limite_credito: string;
 }
 

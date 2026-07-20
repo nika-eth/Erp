@@ -9,7 +9,8 @@ const app = createApp();
 const CLIENTE = {
   id_cliente: 1,
   nombre: 'Construcciones del Sur SA',
-  cuit_dni: '30712345671',
+  tipo_documento: 'CUIT',
+  numero_documento: '30712345671',
   limite_credito: '500000.00',
   id_zona: null,
 };

@@ -65,7 +65,7 @@ export function Comprobante({ documento, cliente, sucursalNombre, pagos, saldoPe
       <div className="mb-6">
         <p className="font-semibold">{cliente.nombre}</p>
         <p className="text-neutral-600">
-          {documento.tipo_documento === 'FACTURA_B' ? 'DNI' : 'CUIT'}: {cliente.cuit_dni}
+          {cliente.tipo_documento}: {cliente.numero_documento}
         </p>
       </div>
 

@@ -20,7 +20,7 @@ export async function buscarDocumentos(filtro: FiltroHistorial): Promise<Documen
 
   if (filtro.cliente) {
     valores.push(`%${filtro.cliente}%`);
-    condiciones.push(`(c.nombre ILIKE $${valores.length} OR c.cuit_dni ILIKE $${valores.length})`);
+    condiciones.push(`(c.nombre ILIKE $${valores.length} OR c.numero_documento ILIKE $${valores.length})`);
   }
   if (filtro.nro_remito) {
     valores.push(filtro.nro_remito);
