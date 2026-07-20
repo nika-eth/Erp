@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '../../../api/client';
 import { buscarClientePorIdentificacion } from '../../../api/clientes';
 import { guardarPresupuesto as guardarPresupuestoApi } from '../../../api/ventas';
+import { Comprobante, type ComprobanteProps } from '../../common/Comprobante';
+import { useSession } from '../../../context/SessionContext';
 import { useGlobalHotkeys } from '../../../hooks/useGlobalHotkeys';
 import type { Cliente, FacturarVentaResult, ItemInput, TipoDocumento } from '../../../types/domain';
 import { CatalogoMateriales } from './CatalogoMateriales';
@@ -18,6 +20,7 @@ function calcularSubtotal(item: ItemInput): number {
 }
 
 export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Element {
+  const { sucursal } = useSession();
   const [cuitDniInput, setCuitDniInput] = useState('');
   const [cliente, setCliente] = useState<Cliente | null>(null);
   const [tipoDocumento, setTipoDocumento] = useState<TipoDocumento | null>(null);
@@ -28,12 +31,22 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
   const [guardandoPresupuesto, setGuardandoPresupuesto] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mensaje, setMensaje] = useState<string | null>(null);
+  const [comprobante, setComprobante] = useState<ComprobanteProps | null>(null);
 
   const inputClienteRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     inputClienteRef.current?.focus();
   }, []);
+
+  // F2 imprime el presupuesto y F12 imprime el comprobante de venta al
+  // confirmarse: dispara el diálogo de impresión del navegador apenas el
+  // nodo #comprobante-imprimible (ver Comprobante.tsx) está en el DOM.
+  useEffect(() => {
+    if (!comprobante) return;
+    const t = setTimeout(() => window.print(), 150);
+    return () => clearTimeout(t);
+  }, [comprobante]);
 
   useEffect(() => {
     if (!error && !mensaje) return;
@@ -83,6 +96,7 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
     try {
       const { documento } = await guardarPresupuestoApi(cliente.id_cliente, items);
       setMensaje(`Presupuesto #${documento.id_documento} guardado.`);
+      setComprobante({ documento, cliente, sucursalNombre: sucursal?.nombre ?? '' });
       limpiarFormulario();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo guardar el presupuesto.');
@@ -92,11 +106,21 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
   }
 
   function onFacturado(resultado: FacturarVentaResult): void {
+    if (!cliente) return;
     setRendicionAbierta(false);
     setMensaje(
       `${ETIQUETA_TIPO[resultado.documento.tipo_documento]} · Remito ${resultado.documento.nro_remito} · ` +
         `Saldo pendiente: $${resultado.saldo_pendiente.toFixed(2)}`,
     );
+    setComprobante({
+      documento: resultado.documento,
+      cliente,
+      sucursalNombre: sucursal?.nombre ?? '',
+      pagos: resultado.movimientos
+        .filter((m) => Number(m.haber) > 0)
+        .map((m) => ({ concepto: m.concepto ?? 'Pago', monto: Number(m.haber) })),
+      saldoPendiente: resultado.saldo_pendiente,
+    });
     limpiarFormulario();
   }
 
@@ -222,6 +246,8 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
       {rendicionAbierta && cliente && (
         <RendicionPago total={total} clienteId={cliente.id_cliente} items={items} onExito={onFacturado} />
       )}
+
+      {comprobante && <Comprobante {...comprobante} />}
     </div>
   );
 }
