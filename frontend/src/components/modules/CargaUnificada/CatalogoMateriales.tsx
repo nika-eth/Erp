@@ -86,7 +86,8 @@ export function CatalogoMateriales({ onSeleccionar }: CatalogoMaterialesProps): 
             placeholder="Buscar material… (↑/↓ navega, Enter selecciona)"
             className="mb-3 w-full rounded border border-neutral-300 px-3 py-2 text-sm focus:border-acento"
           />
-          <ul className="max-h-72 overflow-y-auto text-sm">
+          {/* select-text explícito: permite copiar la descripción de un material con el mouse. */}
+          <ul className="max-h-72 select-text overflow-y-auto text-sm">
             {materialesFiltrados.map((m, i) => (
               <li
                 key={m.id_material}
@@ -105,7 +106,7 @@ export function CatalogoMateriales({ onSeleccionar }: CatalogoMaterialesProps): 
         </>
       ) : (
         <div className="text-sm">
-          <p className="mb-4 font-medium text-neutral-900">{seleccionado.descripcion}</p>
+          <p className="mb-4 select-text font-medium text-neutral-900">{seleccionado.descripcion}</p>
           <div className="mb-3 grid grid-cols-2 gap-3">
             <label className="block">
               <span className="mb-1 block text-neutral-600">Cantidad ({seleccionado.unidad})</span>

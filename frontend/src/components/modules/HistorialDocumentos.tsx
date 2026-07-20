@@ -63,7 +63,8 @@ export function HistorialDocumentos({ onSalir }: { onSalir: () => void }): JSX.E
       {error && <p className="rounded bg-red-50 px-3 py-2 text-sm text-peligro">{error}</p>}
 
       <div className="flex-1 overflow-y-auto rounded-lg border border-neutral-200">
-        <table className="w-full text-sm">
+        {/* select-text explícito: permite copiar remito/cliente/total con el mouse. */}
+        <table className="w-full select-text text-sm">
           <thead className="sticky top-0 bg-white">
             <tr className="border-b border-neutral-200 text-left text-xs uppercase tracking-wide text-neutral-500">
               <th className="px-4 py-2">Remito</th>
