@@ -61,7 +61,22 @@ export interface MovimientoCuentaCorriente {
   haber: string;
   id_documento: number | null;
   id_cuenta: number | null;
+  id_recibo: number | null;
   concepto: string | null;
+}
+
+/** Resumen de cliente embebido en la Ficha Contable (F9). */
+export interface ResumenClienteCuentaCorriente {
+  id_cliente: number;
+  nombre: string;
+  cuit_dni: string;
+  limite_credito: string;
+}
+
+export interface FichaCuentaCorriente {
+  cliente: ResumenClienteCuentaCorriente;
+  movimientos: Array<MovimientoCuentaCorriente & { saldo: string }>;
+  saldo_total: string;
 }
 
 /**
@@ -182,4 +197,44 @@ export interface AsignarEnvioInput {
   id_camion: number;
   id_documento: number;
   fecha_despacho: string; // 'YYYY-MM-DD'
+}
+
+// -----------------------------------------------------------------------
+// Recibos de cobranza
+// -----------------------------------------------------------------------
+
+export interface Recibo {
+  id_recibo: number;
+  nro_recibo: number | null;
+  cliente_id: number;
+  id_sucursal: number;
+  fecha: string;
+  monto_total: string;
+  id_usuario: number;
+}
+
+export interface DetallePagoRecibo {
+  id_detalle: number;
+  id_recibo: number;
+  id_cuenta: number;
+  monto: string;
+  nro_comprobante: string | null;
+}
+
+export interface PagoReciboInput {
+  id_cuenta: number;
+  monto: number;
+  nro_comprobante?: string;
+}
+
+export interface EmitirReciboInput {
+  cliente_id: number;
+  pagos: PagoReciboInput[];
+}
+
+export interface EmitirReciboResult {
+  recibo: Recibo;
+  detalles: DetallePagoRecibo[];
+  movimientos: MovimientoCuentaCorriente[];
+  saldo_actual: number;
 }

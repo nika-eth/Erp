@@ -1,11 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
-import { ApiError } from '../../api/client';
-import { buscarClientes } from '../../api/clientes';
-import { obtenerFichaCuentaCorriente } from '../../api/cuentaCorriente';
-import { useGlobalHotkeys } from '../../hooks/useGlobalHotkeys';
-import type { Cliente, FichaCuentaCorriente as FichaCuentaCorrienteType } from '../../types/domain';
+import { ApiError } from '../../../api/client';
+import { buscarClientes } from '../../../api/clientes';
+import { obtenerFichaCuentaCorriente } from '../../../api/cuentaCorriente';
+import { useGlobalHotkeys } from '../../../hooks/useGlobalHotkeys';
+import type { Cliente, EmitirReciboResult, FichaCuentaCorriente as FichaCuentaCorrienteType } from '../../../types/domain';
+import { ModalCobranza } from './ModalCobranza';
 
-/** Ficha Contable de Cuenta Corriente (F9): DEBE | HABER | SALDO TOTAL. */
+/**
+ * Ficha Contable de Cuenta Corriente (F9). Se monta como overlay de
+ * pantalla completa por encima de lo que esté activo (ver `App.tsx` +
+ * `HotkeySuspensionBoundary`), no como un módulo más que reemplaza la
+ * pantalla — así F9 funciona desde cualquier punto de la app sin perder el
+ * trabajo en curso en otra pantalla.
+ */
 export function FichaCuentaCorriente({ onSalir }: { onSalir: () => void }): JSX.Element {
   const [termino, setTermino] = useState('');
   const [candidatos, setCandidatos] = useState<Cliente[]>([]);
@@ -13,12 +20,28 @@ export function FichaCuentaCorriente({ onSalir }: { onSalir: () => void }): JSX.
   const [cliente, setCliente] = useState<Cliente | null>(null);
   const [ficha, setFicha] = useState<FichaCuentaCorrienteType | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [mensaje, setMensaje] = useState<string | null>(null);
+  const [cobranzaAbierta, setCobranzaAbierta] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
+
+  useEffect(() => {
+    if (!mensaje) return;
+    const t = setTimeout(() => setMensaje(null), 5000);
+    return () => clearTimeout(t);
+  }, [mensaje]);
+
+  async function recargarFicha(idCliente: number): Promise<void> {
+    try {
+      setFicha(await obtenerFichaCuentaCorriente(idCliente));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'No se pudo cargar la ficha de cuenta corriente.');
+    }
+  }
 
   async function buscarCliente(): Promise<void> {
     setError(null);
@@ -38,11 +61,7 @@ export function FichaCuentaCorriente({ onSalir }: { onSalir: () => void }): JSX.
   async function seleccionarCliente(c: Cliente): Promise<void> {
     setCliente(c);
     setCandidatos([]);
-    try {
-      setFicha(await obtenerFichaCuentaCorriente(c.id_cliente));
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'No se pudo cargar la ficha de cuenta corriente.');
-    }
+    await recargarFicha(c.id_cliente);
   }
 
   function onKeyDownBusqueda(event: React.KeyboardEvent<HTMLInputElement>): void {
@@ -65,9 +84,21 @@ export function FichaCuentaCorriente({ onSalir }: { onSalir: () => void }): JSX.
     }
   }
 
+  function onCobranzaEmitida(resultado: EmitirReciboResult): void {
+    setCobranzaAbierta(false);
+    setMensaje(
+      `Recibo #${resultado.recibo.nro_recibo} emitido por $${Number(resultado.recibo.monto_total).toFixed(2)}.`,
+    );
+    if (cliente) void recargarFicha(cliente.id_cliente);
+  }
+
   useGlobalHotkeys({
+    F2: () => {
+      if (cliente && ficha && !cobranzaAbierta) setCobranzaAbierta(true);
+    },
     Escape: () => {
-      if (cliente) {
+      if (cobranzaAbierta) setCobranzaAbierta(false);
+      else if (cliente) {
         setCliente(null);
         setFicha(null);
         inputRef.current?.focus();
@@ -77,8 +108,10 @@ export function FichaCuentaCorriente({ onSalir }: { onSalir: () => void }): JSX.
     },
   });
 
+  const saldoTotal = ficha ? Number(ficha.saldo_total) : 0;
+
   return (
-    <div className="flex h-full flex-col gap-4 bg-white p-6">
+    <div className="fixed inset-0 z-30 flex h-full flex-col gap-4 bg-white p-6">
       {!cliente && (
         <label className="block w-96 text-sm">
           <span className="mb-1 block text-neutral-600">Cliente (nombre o CUIT/DNI)</span>
@@ -107,22 +140,24 @@ export function FichaCuentaCorriente({ onSalir }: { onSalir: () => void }): JSX.
       )}
 
       {error && <p className="rounded bg-red-50 px-3 py-2 text-sm text-peligro">{error}</p>}
+      {mensaje && <p className="rounded bg-green-50 px-3 py-2 text-sm text-exito">{mensaje}</p>}
 
       {cliente && ficha && (
         <>
           <div className="flex items-center justify-between">
             <div>
-              <div className="font-medium text-neutral-900">{cliente.nombre}</div>
-              <div className="text-xs text-neutral-500">{cliente.cuit_dni}</div>
+              <div className="font-medium text-neutral-900">{ficha.cliente.nombre}</div>
+              <div className="text-xs text-neutral-500">
+                {ficha.cliente.cuit_dni} · Límite de crédito: ${Number(ficha.cliente.limite_credito).toFixed(2)}
+              </div>
             </div>
             <div className="text-right">
-              <div className="text-xs uppercase tracking-wide text-neutral-500">Saldo total</div>
-              <div
-                className={`font-mono text-xl font-semibold ${
-                  Number(ficha.saldo_total) > 0 ? 'text-peligro' : 'text-neutral-900'
-                }`}
-              >
-                ${Number(ficha.saldo_total).toFixed(2)}
+              <div className="text-xs uppercase tracking-wide text-neutral-500">Saldo acumulado</div>
+              <div className={`font-mono text-2xl font-bold ${saldoTotal > 0 ? 'text-peligro' : 'text-exito'}`}>
+                ${saldoTotal.toFixed(2)}
+              </div>
+              <div className="text-xs text-neutral-400">
+                {saldoTotal > 0 ? 'Deudor' : saldoTotal < 0 ? 'Saldo a favor' : 'Al día'}
               </div>
             </div>
           </div>
@@ -132,10 +167,10 @@ export function FichaCuentaCorriente({ onSalir }: { onSalir: () => void }): JSX.
               <thead className="sticky top-0 bg-white">
                 <tr className="border-b border-neutral-200 text-left text-xs uppercase tracking-wide text-neutral-500">
                   <th className="px-4 py-2">Fecha</th>
-                  <th className="px-4 py-2">Concepto</th>
+                  <th className="px-4 py-2">Concepto / Comprobante</th>
                   <th className="px-4 py-2 text-right">Debe</th>
                   <th className="px-4 py-2 text-right">Haber</th>
-                  <th className="px-4 py-2 text-right">Saldo Total</th>
+                  <th className="px-4 py-2 text-right">Saldo Acumulado</th>
                 </tr>
               </thead>
               <tbody>
@@ -149,7 +184,13 @@ export function FichaCuentaCorriente({ onSalir }: { onSalir: () => void }): JSX.
                     <td className="px-4 py-2 text-right font-mono">
                       {Number(m.haber) > 0 ? `$${Number(m.haber).toFixed(2)}` : ''}
                     </td>
-                    <td className="px-4 py-2 text-right font-mono">${Number(m.saldo).toFixed(2)}</td>
+                    <td
+                      className={`px-4 py-2 text-right font-mono font-medium ${
+                        Number(m.saldo) > 0 ? 'text-peligro' : 'text-exito'
+                      }`}
+                    >
+                      ${Number(m.saldo).toFixed(2)}
+                    </td>
                   </tr>
                 ))}
                 {ficha.movimientos.length === 0 && (
@@ -166,8 +207,10 @@ export function FichaCuentaCorriente({ onSalir }: { onSalir: () => void }): JSX.
       )}
 
       <div className="text-xs text-neutral-400">
-        {cliente ? 'Esc para buscar otro cliente' : 'Esc para volver'}
+        {cliente ? 'F2 emitir recibo de cobranza · Esc para buscar otro cliente' : 'Esc para volver'}
       </div>
+
+      {cobranzaAbierta && cliente && <ModalCobranza clienteId={cliente.id_cliente} onEmitido={onCobranzaEmitida} />}
     </div>
   );
 }
