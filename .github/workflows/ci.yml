@@ -7,7 +7,7 @@ on:
 
 jobs:
   backend:
-    name: Backend (typecheck + build)
+    name: Backend (typecheck + test + build)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -20,7 +20,8 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
-      - run: npm run typecheck
+      - run: npm run typecheck:test
+      - run: npm run test
       - run: npm run build
 
   frontend:
