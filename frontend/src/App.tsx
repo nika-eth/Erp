@@ -6,7 +6,7 @@ import { ControlRuteo } from './components/modules/Logistica/ControlRuteo';
 import { Header } from './components/layout/Header';
 import { LoginGate } from './components/layout/LoginGate';
 import { PuntoMuerto } from './components/layout/PuntoMuerto';
-import { useSession } from './context/SessionContext';
+import { useAuth } from './context/AuthContext';
 import { useGlobalHotkeys } from './hooks/useGlobalHotkeys';
 
 type Modulo = 'PUNTO_MUERTO' | 'CARGA_UNIFICADA' | 'HISTORIAL' | 'CUENTA_CORRIENTE' | 'LOGISTICA';
@@ -44,6 +44,6 @@ function Mostrador(): JSX.Element {
 }
 
 export default function App(): JSX.Element {
-  const { estaAutenticado } = useSession();
+  const { estaAutenticado } = useAuth();
   return estaAutenticado ? <Mostrador /> : <LoginGate />;
 }

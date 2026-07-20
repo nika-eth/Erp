@@ -64,11 +64,38 @@ export interface MovimientoCuentaCorriente {
   concepto: string | null;
 }
 
-/** Identidad atada a la sesión del usuario logueado (sucursal + rol). */
-export interface SesionUsuario {
-  id_sucursal: number;
+/**
+ * Payload del JWT de sesión. `id_sucursal` viaja firmado en el token (no lo
+ * elige el cliente en cada request) para que ningún vendedor pueda facturar
+ * a nombre de otra sucursal manipulando el payload de la request.
+ */
+export interface UserPayload {
+  id_usuario: number;
+  usuario: string;
+  nombre: string;
   rol: Rol;
-  vendedor: string;
+  id_sucursal: number;
+}
+
+/** Fila de la tabla `usuarios`. `password_hash`/`pin_autorizacion_hash` nunca viajan al frontend. */
+export interface Usuario {
+  id_usuario: number;
+  nombre: string;
+  usuario: string;
+  password_hash: string;
+  pin_autorizacion_hash: string | null;
+  rol: Rol;
+  id_sucursal: number | null;
+  activo: boolean;
+}
+
+export interface AuditoriaAutorizacion {
+  id_autorizacion: number;
+  id_usuario_vendedor: number;
+  id_supervisor: number;
+  id_cliente: number;
+  monto_excedido: string;
+  fecha: string;
 }
 
 // -----------------------------------------------------------------------
@@ -99,6 +126,7 @@ export interface FacturarVentaResult {
   documento: Documento;
   saldo_pendiente: number;
   movimientos: MovimientoCuentaCorriente[];
+  autorizacion?: { supervisor: string; monto_excedido: number };
 }
 
 // -----------------------------------------------------------------------

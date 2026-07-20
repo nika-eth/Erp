@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { asyncHandler } from '../middleware/asyncHandler';
-import { requireSession } from '../middleware/session';
+import { authenticateJWT } from '../middleware/auth';
 import {
   getCamiones,
   getDocumentosPendientes,
@@ -11,7 +11,7 @@ import {
 
 export const logisticaRouter = Router();
 
-logisticaRouter.use(requireSession);
+logisticaRouter.use(authenticateJWT);
 
 logisticaRouter.get('/zonas', asyncHandler(getZonas));
 logisticaRouter.get('/camiones', asyncHandler(getCamiones));

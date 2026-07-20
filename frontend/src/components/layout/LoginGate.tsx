@@ -1,43 +1,29 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { login } from '../../api/auth';
 import { ApiError } from '../../api/client';
-import { listarSucursales } from '../../api/catalogos';
-import { ROLES, useSession } from '../../context/SessionContext';
-import type { Rol, Sucursal } from '../../types/domain';
+import { useAuth } from '../../context/AuthContext';
 
 /**
- * Puerta de acceso previa al mostrador. El modelo de datos provisto no
- * incluye una tabla `usuarios`, así que en vez de credenciales se pide
- * sucursal + rol + nombre de vendedor; esto ata la sesión a una sucursal
- * tal como pide la regla de "Identidad por Sesión".
+ * Puerta de acceso previa al mostrador. La sucursal y el rol no se eligen
+ * acá: quedan atados al usuario autenticado y viajan firmados dentro del
+ * JWT (ver `UserPayload`), para que no se puedan manipular desde el cliente.
  */
 export function LoginGate(): JSX.Element {
-  const { iniciarSesion } = useSession();
-  const [sucursales, setSucursales] = useState<Sucursal[]>([]);
-  const [idSucursal, setIdSucursal] = useState<number | ''>('');
-  const [rol, setRol] = useState<Rol>('VENDEDOR');
-  const [vendedor, setVendedor] = useState('');
+  const { iniciarSesion } = useAuth();
+  const [usuario, setUsuario] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
 
-  useEffect(() => {
-    listarSucursales()
-      .then((res) => {
-        setSucursales(res.sucursales);
-        if (res.sucursales[0]) setIdSucursal(res.sucursales[0].id_sucursal);
-      })
-      .catch(() => setError('No se pudo conectar con el servidor.'));
-  }, []);
-
   async function onSubmit(event: FormEvent): Promise<void> {
     event.preventDefault();
-    if (idSucursal === '' || !vendedor.trim()) return;
+    if (!usuario.trim() || !password) return;
 
     setCargando(true);
     setError(null);
     try {
-      const { token, sesion, sucursal } = await login(idSucursal, rol, vendedor);
-      iniciarSesion(token, sesion, sucursal);
+      const { token, user, sucursal } = await login(usuario.trim(), password);
+      iniciarSesion(token, user, sucursal);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Error inesperado al iniciar sesión.');
     } finally {
@@ -52,42 +38,25 @@ export function LoginGate(): JSX.Element {
         <p className="mb-6 text-sm text-neutral-500">Iniciar turno de mostrador</p>
 
         <label className="mb-3 block text-sm">
-          <span className="mb-1 block text-neutral-600">Sucursal</span>
-          <select
+          <span className="mb-1 block text-neutral-600">Usuario</span>
+          <input
             autoFocus
-            value={idSucursal}
-            onChange={(e) => setIdSucursal(Number(e.target.value))}
+            value={usuario}
+            onChange={(e) => setUsuario(e.target.value)}
+            placeholder="usuario"
+            autoComplete="username"
             className="w-full rounded border border-neutral-300 px-3 py-2 focus:border-acento"
-          >
-            {sucursales.map((s) => (
-              <option key={s.id_sucursal} value={s.id_sucursal}>
-                {s.nombre}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="mb-3 block text-sm">
-          <span className="mb-1 block text-neutral-600">Rol</span>
-          <select
-            value={rol}
-            onChange={(e) => setRol(e.target.value as Rol)}
-            className="w-full rounded border border-neutral-300 px-3 py-2 focus:border-acento"
-          >
-            {ROLES.map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
-          </select>
+          />
         </label>
 
         <label className="mb-4 block text-sm">
-          <span className="mb-1 block text-neutral-600">Vendedor</span>
+          <span className="mb-1 block text-neutral-600">Contraseña</span>
           <input
-            value={vendedor}
-            onChange={(e) => setVendedor(e.target.value)}
-            placeholder="Nombre y apellido"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="••••••••"
+            autoComplete="current-password"
             className="w-full rounded border border-neutral-300 px-3 py-2 focus:border-acento"
           />
         </label>
@@ -96,7 +65,7 @@ export function LoginGate(): JSX.Element {
 
         <button
           type="submit"
-          disabled={cargando || idSucursal === '' || !vendedor.trim()}
+          disabled={cargando || !usuario.trim() || !password}
           className="w-full rounded bg-acento py-2 text-sm font-medium text-white hover:bg-acento-hover disabled:opacity-50"
         >
           {cargando ? 'Ingresando…' : 'Ingresar'}
