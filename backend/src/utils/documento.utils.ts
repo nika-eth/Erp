@@ -17,3 +17,10 @@ export function tipoDocumentoPorIdentificacion(cuitDni: string): TipoDocumento {
 export function redondearMoneda(valor: number): number {
   return Math.round((valor + Number.EPSILON) * 100) / 100;
 }
+
+/** Etiqueta legible para mostrar en conceptos de cuenta_corriente y UI. */
+export const ETIQUETA_TIPO_DOCUMENTO: Record<TipoDocumento, string> = {
+  FACTURA_A: 'Factura A',
+  FACTURA_B: 'Factura B',
+  PRESUPUESTO: 'Presupuesto',
+};

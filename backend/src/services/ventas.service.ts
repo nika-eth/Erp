@@ -1,7 +1,7 @@
 import type { PoolClient } from 'pg';
 import { pool, withTransaction } from '../config/db';
 import { AppError } from '../utils/AppError';
-import { redondearMoneda, tipoDocumentoPorIdentificacion } from '../utils/documento.utils';
+import { ETIQUETA_TIPO_DOCUMENTO, redondearMoneda, tipoDocumentoPorIdentificacion } from '../utils/documento.utils';
 import { buscarClientePorId } from './clientes.service';
 import type {
   CuentaEmpresa,
@@ -131,7 +131,7 @@ export async function facturarVenta(
         input.cliente_id,
         totalNeto,
         documento.id_documento,
-        `Venta ${tipo_documento} - Remito ${documento.nro_remito}`,
+        `Venta ${ETIQUETA_TIPO_DOCUMENTO[tipo_documento]} - Remito ${documento.nro_remito}`,
       ],
     );
     movimientos.push(debeRows[0]);
