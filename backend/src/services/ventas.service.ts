@@ -158,7 +158,7 @@ export async function facturarVenta(
     const { rows: debeRows } = await client.query<MovimientoCuentaCorriente>(
       `INSERT INTO cuenta_corriente (cliente_id, fecha, debe, haber, id_documento, concepto)
        VALUES ($1, NOW(), $2, 0, $3, $4)
-       RETURNING id_movimiento, cliente_id, fecha, debe, haber, id_documento, id_cuenta, concepto`,
+       RETURNING id_movimiento, cliente_id, fecha, debe, haber, id_documento, id_cuenta, id_recibo, concepto`,
       [
         input.cliente_id,
         totalNeto,
@@ -181,7 +181,7 @@ export async function facturarVenta(
       const { rows: haberRows } = await client.query<MovimientoCuentaCorriente>(
         `INSERT INTO cuenta_corriente (cliente_id, fecha, debe, haber, id_documento, id_cuenta, concepto)
          VALUES ($1, NOW(), 0, $2, $3, $4, $5)
-         RETURNING id_movimiento, cliente_id, fecha, debe, haber, id_documento, id_cuenta, concepto`,
+         RETURNING id_movimiento, cliente_id, fecha, debe, haber, id_documento, id_cuenta, id_recibo, concepto`,
         [
           input.cliente_id,
           pago.monto,
