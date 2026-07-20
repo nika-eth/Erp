@@ -20,6 +20,8 @@ export const env = {
     user: required('PGUSER', 'postgres'),
     password: required('PGPASSWORD', 'postgres'),
     poolMax: Number(process.env.PG_POOL_MAX ?? 10),
+    /** Neon (y la mayoría de los Postgres gestionados) exigen TLS. Ver PGSSL en .env.example. */
+    ssl: process.env.PGSSL === 'true',
   },
 
   jwt: {
