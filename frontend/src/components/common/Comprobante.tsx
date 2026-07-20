@@ -69,7 +69,9 @@ export function Comprobante({ documento, cliente, sucursalNombre, pagos, saldoPe
         </p>
       </div>
 
-      <table className="mb-4 w-full border-collapse text-left">
+      {/* select-text explícito: hay que poder copiar la descripción/detalle de los
+          ítems (Ctrl+C o click derecho) para pegarlos en otro documento o sistema. */}
+      <table className="mb-4 w-full select-text border-collapse text-left">
         <thead>
           <tr className="border-b border-neutral-400">
             <th className="py-1">Material</th>

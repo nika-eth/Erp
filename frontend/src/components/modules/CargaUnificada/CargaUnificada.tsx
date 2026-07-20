@@ -209,7 +209,10 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
       </div>
 
       <div className="flex-1 rounded-lg border border-neutral-200">
-        <table className="w-full text-sm">
+        {/* select-text explícito: el mostrador necesita poder pintar con el mouse
+            y copiar (Ctrl+C / click derecho) la descripción o el detalle de los
+            ítems cargados para pegarlos en otro documento sin retipearlos. */}
+        <table className="w-full select-text text-sm">
           <thead>
             <tr className="border-b border-neutral-200 text-left text-xs uppercase tracking-wide text-neutral-500">
               <th className="px-4 py-2">Material</th>
