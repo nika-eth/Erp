@@ -3,9 +3,10 @@ import { ApiError } from '../../../api/client';
 import { buscarClientePorIdentificacion } from '../../../api/clientes';
 import { guardarPresupuesto as guardarPresupuestoApi } from '../../../api/ventas';
 import { Comprobante, type ComprobanteProps } from '../../common/Comprobante';
+import { EstadoFiscalBadge } from '../../common/EstadoFiscalBadge';
 import { useAuth } from '../../../context/AuthContext';
 import { useGlobalHotkeys } from '../../../hooks/useGlobalHotkeys';
-import type { Cliente, FacturarVentaResult, ItemInput, TipoDocumento } from '../../../types/domain';
+import type { Cliente, Documento, FacturarVentaResult, ItemInput, TipoDocumento } from '../../../types/domain';
 import { CatalogoMateriales } from './CatalogoMateriales';
 import { RendicionPago } from './RendicionPago';
 
@@ -31,6 +32,7 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
   const [guardandoPresupuesto, setGuardandoPresupuesto] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mensaje, setMensaje] = useState<string | null>(null);
+  const [documentoFacturado, setDocumentoFacturado] = useState<Documento | null>(null);
   const [comprobante, setComprobante] = useState<ComprobanteProps | null>(null);
 
   const inputClienteRef = useRef<HTMLInputElement>(null);
@@ -53,6 +55,7 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
     const t = setTimeout(() => {
       setError(null);
       setMensaje(null);
+      setDocumentoFacturado(null);
     }, 5000);
     return () => clearTimeout(t);
   }, [error, mensaje]);
@@ -112,6 +115,7 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
   function onFacturado(resultado: FacturarVentaResult): void {
     if (!cliente) return;
     setRendicionAbierta(false);
+    setDocumentoFacturado(resultado.documento);
     setMensaje(
       `${ETIQUETA_TIPO[resultado.documento.tipo_documento]} · Remito ${resultado.documento.nro_remito} · ` +
         `Saldo pendiente: $${resultado.saldo_pendiente.toFixed(2)}` +
@@ -205,7 +209,10 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
       </div>
 
       <div className="flex-1 rounded-lg border border-neutral-200">
-        <table className="w-full text-sm">
+        {/* select-text explícito: el mostrador necesita poder pintar con el mouse
+            y copiar (Ctrl+C / click derecho) la descripción o el detalle de los
+            ítems cargados para pegarlos en otro documento sin retipearlos. */}
+        <table className="w-full select-text text-sm">
           <thead>
             <tr className="border-b border-neutral-200 text-left text-xs uppercase tracking-wide text-neutral-500">
               <th className="px-4 py-2">Material</th>
@@ -260,7 +267,12 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
       </div>
 
       {error && <p className="rounded bg-red-50 px-3 py-2 text-sm text-peligro">{error}</p>}
-      {mensaje && <p className="rounded bg-green-50 px-3 py-2 text-sm text-exito">{mensaje}</p>}
+      {mensaje && (
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="rounded bg-green-50 px-3 py-2 text-sm text-exito">{mensaje}</p>
+          {documentoFacturado && <EstadoFiscalBadge documento={documentoFacturado} />}
+        </div>
+      )}
 
       {catalogoAbierto && (
         <CatalogoMateriales
