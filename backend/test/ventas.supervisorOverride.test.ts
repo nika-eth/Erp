@@ -35,6 +35,7 @@ beforeAll(async () => {
 
 function handlerBase(opts: { saldoActual?: number; supervisorPinHash?: string | null } = {}) {
   const { saldoActual = 0, supervisorPinHash = PIN_HASH } = opts;
+  let ultimoDocumento: Record<string, unknown> | null = null;
 
   return (sql: string, params: unknown[]): MockQueryResult => {
     if (/FROM clientes WHERE id_cliente/.test(sql)) {
@@ -55,22 +56,26 @@ function handlerBase(opts: { saldoActual?: number; supervisorPinHash?: string | 
       return { rows: ids.map((id) => ({ id_cuenta: id, nombre_cuenta: CUENTAS_EMPRESA[id] })) };
     }
     if (/INSERT INTO documentos/.test(sql)) {
-      const [id_sucursal_origen, cliente_id, total_neto, tipo_documento, items, id_zona] = params;
-      return {
-        rows: [
-          {
-            id_documento: contadorId++,
-            id_sucursal_origen,
-            nro_remito: 1,
-            fecha: new Date().toISOString(),
-            cliente_id,
-            total_neto: String(total_neto),
-            tipo_documento,
-            items: JSON.parse(items as string),
-            id_zona,
-          },
-        ],
+      const [id_sucursal_origen, cliente_id, total_neto, tipo_documento, items, id_zona, tipo_comprobante, punto_venta] = params;
+      ultimoDocumento = {
+        id_documento: contadorId++,
+        id_sucursal_origen,
+        nro_remito: 1,
+        fecha: new Date().toISOString(),
+        cliente_id,
+        total_neto: String(total_neto),
+        tipo_documento,
+        items: JSON.parse(items as string),
+        id_zona,
+        tipo_comprobante,
+        punto_venta,
+        nro_comprobante_afip: null,
+        cae: null,
+        cae_vencimiento: null,
+        estado_afip: 'PENDIENTE',
+        error_afip_mensaje: null,
       };
+      return { rows: [ultimoDocumento] };
     }
     if (/SELECT COALESCE\(SUM\(debe\) - SUM\(haber\), 0\) AS saldo FROM cuenta_corriente/.test(sql)) {
       return { rows: [{ saldo: String(saldoActual) }] };
@@ -85,6 +90,22 @@ function handlerBase(opts: { saldoActual?: number; supervisorPinHash?: string | 
       }
       const [cliente_id, haber, id_documento, id_cuenta, concepto] = params;
       return { rows: [{ id_movimiento: 2, cliente_id, fecha: new Date().toISOString(), debe: '0.00', haber: String(haber), id_documento, id_cuenta, concepto }] };
+    }
+    if (/UPDATE documentos SET estado_afip = \$1, error_afip_mensaje = \$2/.test(sql)) {
+      const [estado_afip, error_afip_mensaje] = params;
+      ultimoDocumento = { ...ultimoDocumento, estado_afip, error_afip_mensaje };
+      return { rows: [ultimoDocumento] };
+    }
+    if (/UPDATE documentos SET cae = \$1/.test(sql)) {
+      const [cae, cae_vencimiento] = params;
+      ultimoDocumento = { ...ultimoDocumento, cae, cae_vencimiento, estado_afip: 'APROBADO' };
+      return { rows: [ultimoDocumento] };
+    }
+    if (/INSERT INTO cola_facturacion_afip/.test(sql)) {
+      return { rows: [] };
+    }
+    if (/pg_advisory_xact_lock/.test(sql)) {
+      return { rows: [] };
     }
     throw new Error(`Query no esperada en el test: ${sql}`);
   };

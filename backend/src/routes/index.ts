@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { afipRouter } from './afip.routes';
 import { authRouter } from './auth.routes';
 import { catalogosRouter } from './catalogos.routes';
 import { clientesRouter } from './clientes.routes';
@@ -10,6 +11,7 @@ import { ventasRouter } from './ventas.routes';
 
 export const apiRouter = Router();
 
+apiRouter.use('/afip', afipRouter);
 apiRouter.use('/auth', authRouter);
 apiRouter.use('/catalogos', catalogosRouter);
 apiRouter.use('/clientes', clientesRouter);

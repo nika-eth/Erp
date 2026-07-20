@@ -7,6 +7,15 @@ export type Rol = 'ADMIN' | 'SUPERVISOR' | 'VENDEDOR';
 
 export type TipoDocumento = 'PRESUPUESTO' | 'FACTURA_A' | 'FACTURA_B';
 
+/**
+ * Ver `src/afip/types.ts` para el detalle de la integración con AFIP.
+ * `PENDIENTE` es un estado transitorio dentro de la propia transacción de
+ * facturación; en la práctica un documento persistido siempre termina en
+ * APROBADO, CONTINGENCIA o RECHAZADO (o NULL si no es un comprobante fiscal,
+ * ej. un PRESUPUESTO).
+ */
+export type EstadoAfip = 'PENDIENTE' | 'APROBADO' | 'CONTINGENCIA' | 'RECHAZADO';
+
 export interface Sucursal {
   id_sucursal: number;
   nombre: string;
@@ -51,6 +60,13 @@ export interface Documento {
   tipo_documento: TipoDocumento;
   items: ItemDocumento[];
   id_zona: number | null;
+  tipo_comprobante: number | null;
+  punto_venta: number | null;
+  nro_comprobante_afip: number | null;
+  cae: string | null;
+  cae_vencimiento: string | null;
+  estado_afip: EstadoAfip | null;
+  error_afip_mensaje: string | null;
 }
 
 export interface MovimientoCuentaCorriente {
@@ -142,6 +158,29 @@ export interface FacturarVentaResult {
   saldo_pendiente: number;
   movimientos: MovimientoCuentaCorriente[];
   autorizacion?: { supervisor: string; monto_excedido: number };
+}
+
+// -----------------------------------------------------------------------
+// Integración AFIP (WSFE v1) y cola de contingencia
+// -----------------------------------------------------------------------
+
+export type EstadoTareaAfip = 'PENDIENTE' | 'PROCESANDO' | 'COMPLETADO' | 'FALLIDO';
+
+export interface TareaColaAfip {
+  id_tarea: number;
+  id_documento: number;
+  reintentos: number;
+  proximo_reintento: string;
+  estado: EstadoTareaAfip;
+  ultimo_error: string | null;
+}
+
+/** Resumen para el indicador global del Header (ver `GET /api/afip/estado`). */
+export interface EstadoServicioAfip {
+  online: boolean;
+  tareas_pendientes: number;
+  tareas_falladas: number;
+  ultima_contingencia: string | null;
 }
 
 // -----------------------------------------------------------------------

@@ -1,7 +1,16 @@
 import type { PoolClient } from 'pg';
+import { calcularNetoEIva, solicitarCaeParaDocumento } from '../afip/afip.service';
+import { encolarContingencia } from '../afip/cola.repository';
+import { docTipoAfip, TIPO_COMPROBANTE_AFIP } from '../afip/types';
+import { env } from '../config/env';
 import { pool, withTransaction } from '../config/db';
 import { AppError } from '../utils/AppError';
-import { ETIQUETA_TIPO_DOCUMENTO, redondearMoneda, tipoDocumentoPorIdentificacion } from '../utils/documento.utils';
+import {
+  DOCUMENTO_COLUMNAS,
+  ETIQUETA_TIPO_DOCUMENTO,
+  redondearMoneda,
+  tipoDocumentoPorIdentificacion,
+} from '../utils/documento.utils';
 import { buscarClientePorId } from './clientes.service';
 import type {
   CuentaEmpresa,
@@ -135,13 +144,24 @@ export async function facturarVenta(
       client,
     );
 
+    const tipoComprobanteAfip = TIPO_COMPROBANTE_AFIP[tipo_documento];
+
     const { rows: documentoRows } = await client.query<Documento>(
-      `INSERT INTO documentos (id_sucursal_origen, fecha, cliente_id, total_neto, tipo_documento, items, id_zona)
-       VALUES ($1, NOW(), $2, $3, $4, $5::jsonb, $6)
-       RETURNING id_documento, id_sucursal_origen, nro_remito, fecha, cliente_id, total_neto, tipo_documento, items, id_zona`,
-      [contexto.id_sucursal, input.cliente_id, totalNeto, tipo_documento, JSON.stringify(items), cliente.id_zona],
+      `INSERT INTO documentos (id_sucursal_origen, fecha, cliente_id, total_neto, tipo_documento, items, id_zona, tipo_comprobante, punto_venta, estado_afip)
+       VALUES ($1, NOW(), $2, $3, $4, $5::jsonb, $6, $7, $8, 'PENDIENTE')
+       RETURNING ${DOCUMENTO_COLUMNAS}`,
+      [
+        contexto.id_sucursal,
+        input.cliente_id,
+        totalNeto,
+        tipo_documento,
+        JSON.stringify(items),
+        cliente.id_zona,
+        tipoComprobanteAfip,
+        env.afip.puntoVenta,
+      ],
     );
-    const documento = documentoRows[0];
+    let documento = documentoRows[0];
 
     let montoExcedido = 0;
     if (supervisorAutorizacion) {
@@ -193,6 +213,44 @@ export async function facturarVenta(
       movimientos.push(haberRows[0]);
     }
 
+    // Intento de facturación electrónica (AFIP WSFE). Deliberadamente
+    // DESPUÉS de que la venta ya está armada en esta misma transacción, y
+    // ANTES del COMMIT: si AFIP falla, la venta igual se confirma (queda en
+    // CONTINGENCIA); `solicitarCaeParaDocumento` nunca lanza, así que esto
+    // jamás puede hacer abortar la transacción de venta. Ver
+    // `src/afip/afip.service.ts` para el detalle del contrato.
+    const { neto, iva } = calcularNetoEIva(totalNeto);
+    const resultadoAfip = await solicitarCaeParaDocumento(client, {
+      id_documento: documento.id_documento,
+      puntoVenta: env.afip.puntoVenta,
+      tipoComprobante: tipoComprobanteAfip,
+      docTipo: docTipoAfip(cliente.cuit_dni),
+      docNro: cliente.cuit_dni.replace(/\D/g, ''),
+      importeTotal: totalNeto,
+      importeNeto: neto,
+      importeIva: iva,
+      nroComprobanteAfipPrevio: null,
+    });
+
+    if (resultadoAfip.ok) {
+      const { rows } = await client.query<Documento>(
+        `UPDATE documentos SET cae = $1, cae_vencimiento = $2, estado_afip = 'APROBADO'
+         WHERE id_documento = $3 RETURNING ${DOCUMENTO_COLUMNAS}`,
+        [resultadoAfip.cae, resultadoAfip.caeVencimiento, documento.id_documento],
+      );
+      documento = rows[0];
+    } else {
+      const { rows } = await client.query<Documento>(
+        `UPDATE documentos SET estado_afip = $1, error_afip_mensaje = $2
+         WHERE id_documento = $3 RETURNING ${DOCUMENTO_COLUMNAS}`,
+        [resultadoAfip.tipo, resultadoAfip.mensaje, documento.id_documento],
+      );
+      documento = rows[0];
+      if (resultadoAfip.tipo === 'CONTINGENCIA') {
+        await encolarContingencia(client, documento.id_documento);
+      }
+    }
+
     return {
       documento,
       saldo_pendiente: redondearMoneda(totalNeto - totalPagos),
@@ -224,7 +282,7 @@ export async function guardarPresupuesto(
   const { rows } = await pool.query<Documento>(
     `INSERT INTO documentos (id_sucursal_origen, fecha, cliente_id, total_neto, tipo_documento, items)
      VALUES ($1, NOW(), $2, $3, 'PRESUPUESTO', $4::jsonb)
-     RETURNING id_documento, id_sucursal_origen, nro_remito, fecha, cliente_id, total_neto, tipo_documento, items`,
+     RETURNING ${DOCUMENTO_COLUMNAS}`,
     [id_sucursal, input.cliente_id, totalNeto, JSON.stringify(items)],
   );
   return rows[0];

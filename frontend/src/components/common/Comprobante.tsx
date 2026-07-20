@@ -33,11 +33,25 @@ export function Comprobante({ documento, cliente, sucursalNombre, pagos, saldoPe
           <p className="text-neutral-600">{sucursalNombre}</p>
         </div>
         <div className="text-right">
-          <h2 className="text-lg font-bold">{ETIQUETA_TIPO[documento.tipo_documento]}</h2>
+          <h2 className="text-lg font-bold">
+            {documento.estado_afip === 'APROBADO' ? ETIQUETA_TIPO[documento.tipo_documento] : 'Remito de Contingencia'}
+          </h2>
           <p className="text-neutral-600">
             {documento.nro_remito ? `Remito Nº ${documento.nro_remito}` : 'Sin numeración (no válido como factura)'}
           </p>
           <p className="text-neutral-600">{new Date(documento.fecha).toLocaleString('es-AR')}</p>
+          {documento.estado_afip === 'APROBADO' && documento.cae && (
+            <p className="mt-1 text-xs text-neutral-600">
+              CAE: {documento.cae}
+              {documento.cae_vencimiento && ` · Vto. ${new Date(documento.cae_vencimiento).toLocaleDateString('es-AR')}`}
+            </p>
+          )}
+          {(documento.estado_afip === 'CONTINGENCIA' || documento.estado_afip === 'PENDIENTE') && (
+            <p className="mt-1 text-xs font-medium text-amber-700">CAE pendiente de sincronización con AFIP</p>
+          )}
+          {documento.estado_afip === 'RECHAZADO' && (
+            <p className="mt-1 text-xs font-medium text-peligro">AFIP rechazó este comprobante — requiere revisión</p>
+          )}
         </div>
       </div>
 

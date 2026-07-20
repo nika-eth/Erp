@@ -1,3 +1,4 @@
+import { detenerWorkerAfip, iniciarWorkerAfip } from './afip/contingencia.worker';
 import { createApp } from './app';
 import { checkDbConnection, pool } from './config/db';
 import { env } from './config/env';
@@ -11,8 +12,15 @@ async function main(): Promise<void> {
     console.log(`[server] ERP Metalúrgica API escuchando en http://localhost:${env.port} (${env.nodeEnv})`);
   });
 
+  // Poller de la cola de contingencia AFIP (ver src/afip/contingencia.worker.ts).
+  // Corre igual aunque no haya certificado configurado: simplemente cada
+  // ciclo va a fallar rápido y reprogramar con backoff, sin romper nada.
+  iniciarWorkerAfip();
+  console.log(`[afip] Worker de contingencia iniciado (cada ${env.afip.workerIntervalMs / 1000}s).`);
+
   const apagar = async (señal: string): Promise<void> => {
     console.log(`[server] ${señal} recibido, cerrando...`);
+    detenerWorkerAfip();
     server.close(() => {
       console.log('[server] HTTP cerrado.');
     });
