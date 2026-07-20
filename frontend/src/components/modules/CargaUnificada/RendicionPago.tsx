@@ -31,6 +31,8 @@ export function RendicionPago({ total, clienteId, items, onExito }: RendicionPag
   const [error, setError] = useState<string | null>(null);
   const [mostrarAutorizacion, setMostrarAutorizacion] = useState(false);
   const [pin, setPin] = useState('');
+  /** Recordado entre el primer intento y el reintento con PIN de supervisor, para no perder la elección F5/F6. */
+  const [esFiscalElegido, setEsFiscalElegido] = useState(true);
 
   const inputFiltroRef = useRef<HTMLInputElement>(null);
   const inputMontoRef = useRef<HTMLInputElement>(null);
@@ -90,12 +92,15 @@ export function RendicionPago({ total, clienteId, items, onExito }: RendicionPag
     }
   }
 
-  async function enviarFacturacion(pinSupervisor?: string): Promise<void> {
+  async function enviarFacturacion(esFiscal: boolean, pinSupervisor?: string): Promise<void> {
     if (enviando) return;
     setEnviando(true);
     setError(null);
     try {
-      const resultado = await facturarVenta({ cliente_id: clienteId, items, total_neto: total, pagos }, pinSupervisor);
+      const resultado = await facturarVenta(
+        { cliente_id: clienteId, items, total_neto: total, pagos, es_fiscal: esFiscal },
+        pinSupervisor,
+      );
       onExito(resultado);
     } catch (err) {
       if (err instanceof ApiError && err.code === 'LIMITE_CREDITO_EXCEDIDO') {
@@ -115,13 +120,14 @@ export function RendicionPago({ total, clienteId, items, onExito }: RendicionPag
     }
   }
 
-  function confirmarFacturacion(): void {
+  function confirmarFacturacion(esFiscal: boolean): void {
     if (pagos.length === 0) return;
-    void enviarFacturacion();
+    setEsFiscalElegido(esFiscal);
+    void enviarFacturacion(esFiscal);
   }
 
   function onPinCompleto(pinCompleto: string): void {
-    void enviarFacturacion(pinCompleto);
+    void enviarFacturacion(esFiscalElegido, pinCompleto);
   }
 
   function cancelarAutorizacion(): void {
@@ -130,13 +136,17 @@ export function RendicionPago({ total, clienteId, items, onExito }: RendicionPag
     setPin('');
   }
 
-  // F12 dentro de este modal confirma la facturación (distinto del F12 que
-  // abre el modal desde Carga Unificada). Se desactiva mientras se está
-  // esperando el PIN del supervisor, para no reintentar sin PIN por error.
-  useGlobalHotkeys({ F12: confirmarFacturacion }, !cuentaSeleccionada && !mostrarAutorizacion);
+  // F5 (Factura Fiscal, AFIP) / F6 (Comprobante Interno, Remito X) confirman
+  // la facturación eligiendo el tipo de comprobante. Se desactivan mientras
+  // se está esperando el PIN del supervisor, para no reintentar sin PIN por
+  // error; el PIN reintenta con la misma elección F5/F6 ya hecha.
+  useGlobalHotkeys(
+    { F5: () => confirmarFacturacion(true), F6: () => confirmarFacturacion(false) },
+    !cuentaSeleccionada && !mostrarAutorizacion,
+  );
 
   return (
-    <Modal titulo="Rendición de Pago Mixto (F12 confirma)" ancho="lg">
+    <Modal titulo="Rendición de Pago Mixto (F5 fiscal · F6 interno)" ancho="lg">
       <div className="mb-4 grid grid-cols-3 gap-4 text-sm">
         <div>
           <div className="text-neutral-500">Total venta</div>
@@ -213,6 +223,8 @@ export function RendicionPago({ total, clienteId, items, onExito }: RendicionPag
         <div className="mt-4 rounded border border-amber-300 bg-amber-50 p-4">
           <p className="mb-3 text-sm font-medium text-amber-900">
             Autorizar con PIN de Supervisor para facturar de todos modos
+            {' '}
+            ({esFiscalElegido ? 'Factura Fiscal' : 'Comprobante Interno'})
           </p>
           <PinInput value={pin} onChange={setPin} onComplete={onPinCompleto} disabled={enviando} autoFocus />
           <button
@@ -227,7 +239,11 @@ export function RendicionPago({ total, clienteId, items, onExito }: RendicionPag
       )}
 
       <p className="mt-4 text-xs text-neutral-400">
-        {enviando ? 'Facturando…' : mostrarAutorizacion ? 'Esc cancela' : 'F12 confirma la facturación · Esc cancela'}
+        {enviando
+          ? 'Facturando…'
+          : mostrarAutorizacion
+            ? 'Esc cancela'
+            : 'F5 Factura Fiscal (AFIP) · F6 Comprobante Interno (Remito X) · Esc cancela'}
       </p>
     </Modal>
   );

@@ -14,7 +14,7 @@ export type TipoDocumento = 'PRESUPUESTO' | 'FACTURA_A' | 'FACTURA_B';
  * APROBADO, CONTINGENCIA o RECHAZADO (o NULL si no es un comprobante fiscal,
  * ej. un PRESUPUESTO).
  */
-export type EstadoAfip = 'PENDIENTE' | 'APROBADO' | 'CONTINGENCIA' | 'RECHAZADO';
+export type EstadoAfip = 'PENDIENTE' | 'APROBADO' | 'CONTINGENCIA' | 'RECHAZADO' | 'APROBADO_INTERNO';
 
 export interface Sucursal {
   id_sucursal: number;
@@ -60,6 +60,7 @@ export interface Documento {
   tipo_documento: TipoDocumento;
   items: ItemDocumento[];
   id_zona: number | null;
+  es_fiscal: boolean;
   tipo_comprobante: number | null;
   punto_venta: number | null;
   nro_comprobante_afip: number | null;
@@ -151,6 +152,8 @@ export interface FacturarVentaInput {
   items: ItemInput[];
   total_neto: number;
   pagos: PagoInput[];
+  /** Elegido por el vendedor en Rendición de Pago (F5 fiscal / F6 interno). Default `true` si no viene. */
+  es_fiscal?: boolean;
 }
 
 export interface FacturarVentaResult {

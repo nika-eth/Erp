@@ -41,6 +41,8 @@ export const env = {
     certPath: process.env.AFIP_CERT_PATH ?? '',
     keyPath: process.env.AFIP_KEY_PATH ?? '',
     puntoVenta: Number(process.env.AFIP_PUNTO_VENTA ?? 1),
+    /** Punto de venta convencional para comprobantes internos (es_fiscal=false, Remito X). Nunca se usa para pedir CAE. */
+    puntoVentaInterno: Number(process.env.AFIP_PUNTO_VENTA_INTERNO ?? 0),
     /** Si AFIP no responde dentro de este plazo, se cancela la solicitud y se activa contingencia. */
     timeoutMs: Number(process.env.AFIP_TIMEOUT_MS ?? 4000),
     wsaaUrl:

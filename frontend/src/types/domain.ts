@@ -8,7 +8,7 @@ export type Rol = 'ADMIN' | 'SUPERVISOR' | 'VENDEDOR';
 
 export type TipoDocumento = 'PRESUPUESTO' | 'FACTURA_A' | 'FACTURA_B';
 
-export type EstadoAfip = 'PENDIENTE' | 'APROBADO' | 'CONTINGENCIA' | 'RECHAZADO';
+export type EstadoAfip = 'PENDIENTE' | 'APROBADO' | 'CONTINGENCIA' | 'RECHAZADO' | 'APROBADO_INTERNO';
 
 export interface Sucursal {
   id_sucursal: number;
@@ -55,6 +55,7 @@ export interface Documento {
   items: ItemDocumento[];
   cliente_nombre?: string;
   sucursal_nombre?: string;
+  es_fiscal: boolean;
   tipo_comprobante: number | null;
   punto_venta: number | null;
   nro_comprobante_afip: number | null;
@@ -117,6 +118,8 @@ export interface FacturarVentaInput {
   items: ItemInput[];
   total_neto: number;
   pagos: PagoInput[];
+  /** F5 (fiscal, default) vs F6 (interno) en Rendición de Pago. */
+  es_fiscal?: boolean;
 }
 
 export interface FacturarVentaResult {

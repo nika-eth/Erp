@@ -18,6 +18,15 @@ export function EstadoFiscalBadge({ documento }: { documento: Documento }): JSX.
     );
   }
 
+  if (documento.estado_afip === 'APROBADO_INTERNO') {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded bg-neutral-100 px-2 py-1 text-xs font-medium text-neutral-600">
+        <span className="h-1.5 w-1.5 rounded-full bg-neutral-400" />
+        Comprobante Interno (No válido como Factura)
+      </span>
+    );
+  }
+
   if (documento.estado_afip === 'CONTINGENCIA') {
     return (
       <span className="inline-flex items-center gap-1.5 rounded bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800">

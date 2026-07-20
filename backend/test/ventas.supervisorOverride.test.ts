@@ -56,7 +56,8 @@ function handlerBase(opts: { saldoActual?: number; supervisorPinHash?: string | 
       return { rows: ids.map((id) => ({ id_cuenta: id, nombre_cuenta: CUENTAS_EMPRESA[id] })) };
     }
     if (/INSERT INTO documentos/.test(sql)) {
-      const [id_sucursal_origen, cliente_id, total_neto, tipo_documento, items, id_zona, tipo_comprobante, punto_venta] = params;
+      const [id_sucursal_origen, cliente_id, total_neto, tipo_documento, items, id_zona, es_fiscal, tipo_comprobante, punto_venta, estado_afip] =
+        params;
       ultimoDocumento = {
         id_documento: contadorId++,
         id_sucursal_origen,
@@ -67,12 +68,13 @@ function handlerBase(opts: { saldoActual?: number; supervisorPinHash?: string | 
         tipo_documento,
         items: JSON.parse(items as string),
         id_zona,
+        es_fiscal,
         tipo_comprobante,
         punto_venta,
         nro_comprobante_afip: null,
         cae: null,
         cae_vencimiento: null,
-        estado_afip: 'PENDIENTE',
+        estado_afip,
         error_afip_mensaje: null,
       };
       return { rows: [ultimoDocumento] };

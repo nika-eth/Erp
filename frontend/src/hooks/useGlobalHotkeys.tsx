@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, type ReactNode } from 'react';
 
-export type HotkeyKey = 'F1' | 'F2' | 'F3' | 'F4' | 'F5' | 'F9' | 'F12' | 'Escape' | 'Backspace';
+export type HotkeyKey = 'F1' | 'F2' | 'F3' | 'F4' | 'F5' | 'F6' | 'F9' | 'F12' | 'Escape' | 'Backspace';
 
 export type HotkeyMap = Partial<Record<HotkeyKey, (event: KeyboardEvent) => void>>;
 

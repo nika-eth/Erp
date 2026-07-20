@@ -34,7 +34,11 @@ export function Comprobante({ documento, cliente, sucursalNombre, pagos, saldoPe
         </div>
         <div className="text-right">
           <h2 className="text-lg font-bold">
-            {documento.estado_afip === 'APROBADO' ? ETIQUETA_TIPO[documento.tipo_documento] : 'Remito de Contingencia'}
+            {documento.estado_afip === 'APROBADO'
+              ? ETIQUETA_TIPO[documento.tipo_documento]
+              : documento.estado_afip === 'APROBADO_INTERNO'
+                ? 'Comprobante Interno'
+                : 'Remito de Contingencia'}
           </h2>
           <p className="text-neutral-600">
             {documento.nro_remito ? `Remito Nº ${documento.nro_remito}` : 'Sin numeración (no válido como factura)'}
@@ -51,6 +55,9 @@ export function Comprobante({ documento, cliente, sucursalNombre, pagos, saldoPe
           )}
           {documento.estado_afip === 'RECHAZADO' && (
             <p className="mt-1 text-xs font-medium text-peligro">AFIP rechazó este comprobante — requiere revisión</p>
+          )}
+          {documento.estado_afip === 'APROBADO_INTERNO' && (
+            <p className="mt-1 text-xs font-semibold text-neutral-700">Documento No Válido como Factura</p>
           )}
         </div>
       </div>
@@ -112,6 +119,12 @@ export function Comprobante({ documento, cliente, sucursalNombre, pagos, saldoPe
       {documento.tipo_documento === 'PRESUPUESTO' && (
         <p className="mt-8 text-xs text-neutral-500">
           Presupuesto sin validez fiscal. No descuenta stock ni genera numeración de remito.
+        </p>
+      )}
+
+      {documento.estado_afip === 'APROBADO_INTERNO' && (
+        <p className="mt-8 text-xs font-semibold text-neutral-700">
+          Documento No Válido como Factura — Comprobante Interno (Remito X), sin validez fiscal.
         </p>
       )}
     </div>
