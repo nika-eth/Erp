@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  /* Mostrador operado 100% por teclado: nunca ocultar el foco. */
+  :focus-visible {
+    outline: 2px solid theme('colors.acento.DEFAULT');
+    outline-offset: 1px;
+  }
+}
+
+/*
+ * Impresión de comprobantes (F2 Presupuesto / F12 Factura): fuera de
+ * impresión el nodo #comprobante-imprimible se mantiene fuera de pantalla
+ * (no `display: none`, para que siga presente al imprimir); al imprimir se
+ * oculta el resto de la app y sólo se muestra este nodo.
+ */
+#comprobante-imprimible {
+  position: fixed;
+  top: -10000px;
+  left: -10000px;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #comprobante-imprimible,
+  #comprobante-imprimible * {
+    visibility: visible;
+  }
+  #comprobante-imprimible {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+  }
+}
