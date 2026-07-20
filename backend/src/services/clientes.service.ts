@@ -6,7 +6,7 @@ import type { Cliente } from '../types/domain';
 export async function buscarClientePorId(id_cliente: number, client?: PoolClient): Promise<Cliente> {
   const runner = client ?? pool;
   const { rows } = await runner.query<Cliente>(
-    `SELECT id_cliente, nombre, cuit_dni, limite_credito FROM clientes WHERE id_cliente = $1`,
+    `SELECT id_cliente, nombre, cuit_dni, limite_credito, id_zona FROM clientes WHERE id_cliente = $1`,
     [id_cliente],
   );
   const cliente = rows[0];
@@ -18,7 +18,7 @@ export async function buscarClientePorId(id_cliente: number, client?: PoolClient
 
 export async function buscarClientePorCuitDni(cuit_dni: string): Promise<Cliente | null> {
   const { rows } = await pool.query<Cliente>(
-    `SELECT id_cliente, nombre, cuit_dni, limite_credito FROM clientes WHERE cuit_dni = $1`,
+    `SELECT id_cliente, nombre, cuit_dni, limite_credito, id_zona FROM clientes WHERE cuit_dni = $1`,
     [cuit_dni.trim()],
   );
   return rows[0] ?? null;
@@ -26,7 +26,7 @@ export async function buscarClientePorCuitDni(cuit_dni: string): Promise<Cliente
 
 export async function buscarClientes(termino: string): Promise<Cliente[]> {
   const { rows } = await pool.query<Cliente>(
-    `SELECT id_cliente, nombre, cuit_dni, limite_credito
+    `SELECT id_cliente, nombre, cuit_dni, limite_credito, id_zona
      FROM clientes
      WHERE cuit_dni ILIKE $1 OR nombre ILIKE $1
      ORDER BY nombre

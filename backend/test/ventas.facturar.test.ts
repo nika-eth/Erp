@@ -11,6 +11,7 @@ const CLIENTE_CUIT = {
   nombre: 'Construcciones del Sur SA',
   cuit_dni: '30712345671', // 11 dígitos -> Factura A
   limite_credito: '500000.00',
+  id_zona: 1,
 };
 
 const CLIENTE_DNI = {
@@ -18,6 +19,7 @@ const CLIENTE_DNI = {
   nombre: 'Juan Perez',
   cuit_dni: '30123456', // 8 dígitos -> Factura B
   limite_credito: '50000.00',
+  id_zona: null,
 };
 
 const CUENTAS_EMPRESA: Record<number, string> = { 1: 'Efectivo', 2: 'Banco Galicia' };
@@ -49,7 +51,7 @@ function handlerFeliz(cliente: typeof CLIENTE_CUIT | typeof CLIENTE_DNI) {
       return { rows: ids.filter((id) => id in CUENTAS_EMPRESA).map((id) => ({ id_cuenta: id, nombre_cuenta: CUENTAS_EMPRESA[id] })) };
     }
     if (/INSERT INTO documentos/.test(sql)) {
-      const [id_sucursal_origen, cliente_id, total_neto, tipo_documento, items] = params;
+      const [id_sucursal_origen, cliente_id, total_neto, tipo_documento, items, id_zona] = params;
       return {
         rows: [
           {
@@ -61,6 +63,7 @@ function handlerFeliz(cliente: typeof CLIENTE_CUIT | typeof CLIENTE_DNI) {
             total_neto: String(total_neto),
             tipo_documento,
             items: JSON.parse(items as string),
+            id_zona,
           },
         ],
       };

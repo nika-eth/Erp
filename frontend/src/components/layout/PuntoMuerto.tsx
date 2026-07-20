@@ -2,6 +2,7 @@ const ATAJOS = [
   { tecla: 'F5', descripcion: 'Carga Unificada (nueva venta / presupuesto)' },
   { tecla: 'F3', descripcion: 'Historial de Documentos' },
   { tecla: 'F9', descripcion: 'Ficha de Cuenta Corriente' },
+  { tecla: 'F4', descripcion: 'Control de Ruteo y Ocupación Diaria' },
 ];
 
 /** Pantalla vacía en espera de atajos: el estado de reposo del mostrador. */

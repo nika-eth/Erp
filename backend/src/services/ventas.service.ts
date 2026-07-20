@@ -114,10 +114,10 @@ export async function facturarVenta(
     );
 
     const { rows: documentoRows } = await client.query<Documento>(
-      `INSERT INTO documentos (id_sucursal_origen, fecha, cliente_id, total_neto, tipo_documento, items)
-       VALUES ($1, NOW(), $2, $3, $4, $5::jsonb)
-       RETURNING id_documento, id_sucursal_origen, nro_remito, fecha, cliente_id, total_neto, tipo_documento, items`,
-      [id_sucursal, input.cliente_id, totalNeto, tipo_documento, JSON.stringify(items)],
+      `INSERT INTO documentos (id_sucursal_origen, fecha, cliente_id, total_neto, tipo_documento, items, id_zona)
+       VALUES ($1, NOW(), $2, $3, $4, $5::jsonb, $6)
+       RETURNING id_documento, id_sucursal_origen, nro_remito, fecha, cliente_id, total_neto, tipo_documento, items, id_zona`,
+      [id_sucursal, input.cliente_id, totalNeto, tipo_documento, JSON.stringify(items), cliente.id_zona],
     );
     const documento = documentoRows[0];
 

@@ -28,6 +28,10 @@ export class AppError extends Error {
     return new AppError(422, code, message, details);
   }
 
+  static conflict(code: string, message: string, details?: unknown): AppError {
+    return new AppError(409, code, message, details);
+  }
+
   static unauthorized(message = 'No autorizado'): AppError {
     return new AppError(401, 'NO_AUTORIZADO', message);
   }
