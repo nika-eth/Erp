@@ -59,6 +59,10 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
 
   const total = Number(items.reduce((acc, i) => acc + calcularSubtotal(i), 0).toFixed(2));
 
+  function quitarItem(indice: number): void {
+    setItems((prev) => prev.filter((_, i) => i !== indice));
+  }
+
   function limpiarFormulario(): void {
     setCuitDniInput('');
     setCliente(null);
@@ -147,6 +151,15 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
     },
   });
 
+  // Atajo separado del principal: sólo se registra (y por lo tanto sólo
+  // hace preventDefault de Backspace) cuando no hay ningún modal con
+  // inputs de texto abierto, para no interferir con el borrado de
+  // caracteres dentro del catálogo o la rendición de pago.
+  useGlobalHotkeys(
+    { Backspace: () => setItems((prev) => prev.slice(0, -1)) },
+    !catalogoAbierto && !rendicionAbierta && items.length > 0,
+  );
+
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto bg-white p-6">
       <div className="flex items-end gap-4">
@@ -197,6 +210,7 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
               <th className="px-4 py-2 text-right">Kilos</th>
               <th className="px-4 py-2 text-right">Precio/kg</th>
               <th className="px-4 py-2 text-right">Subtotal</th>
+              <th className="px-4 py-2" />
             </tr>
           </thead>
           <tbody>
@@ -209,11 +223,22 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
                 </td>
                 <td className="px-4 py-2 text-right font-mono">${item.precio_unitario.toFixed(2)}</td>
                 <td className="px-4 py-2 text-right font-mono">${calcularSubtotal(item).toFixed(2)}</td>
+                <td className="px-4 py-2 text-right">
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onClick={() => quitarItem(i)}
+                    title="Quitar ítem"
+                    className="text-neutral-400 hover:text-peligro"
+                  >
+                    ×
+                  </button>
+                </td>
               </tr>
             ))}
             {items.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-neutral-400">
+                <td colSpan={6} className="px-4 py-8 text-center text-neutral-400">
                   Sin ítems. Presioná F1 para abrir el catálogo de hierros.
                 </td>
               </tr>
@@ -224,7 +249,7 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
 
       <div className="flex items-center justify-between">
         <div className="text-xs text-neutral-400">
-          F1 catálogo · F2 presupuesto · F12 facturar (pago mixto) · Esc cancelar
+          F1 catálogo · F2 presupuesto · F12 facturar (pago mixto) · Backspace quita el último ítem · Esc cancelar
         </div>
         <div className="text-lg font-semibold text-neutral-900">
           Total: <span className="font-mono">${total.toFixed(2)}</span>
