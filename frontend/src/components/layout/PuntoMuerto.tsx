@@ -6,10 +6,14 @@ const ATAJOS = [
 ];
 
 const ATAJO_PRODUCTOS = { tecla: 'F7', descripcion: 'Gestión de Productos' };
+const ATAJO_CUENTAS_PAGAR = { tecla: 'F8', descripcion: 'Cuentas por Pagar' };
 
-/** Pantalla vacía en espera de atajos: el estado de reposo del mostrador. F7 sólo se muestra a ADMIN. */
-export function PuntoMuerto({ esAdmin }: { esAdmin: boolean }): JSX.Element {
-  const atajos = esAdmin ? [...ATAJOS, ATAJO_PRODUCTOS] : ATAJOS;
+/**
+ * Pantalla vacía en espera de atajos: el estado de reposo del mostrador.
+ * F7 sólo se muestra a ADMIN; F8 (Cuentas por Pagar) a ADMIN/SUPERVISOR.
+ */
+export function PuntoMuerto({ esAdmin, esAdminOSupervisor }: { esAdmin: boolean; esAdminOSupervisor: boolean }): JSX.Element {
+  const atajos = [...ATAJOS, ...(esAdmin ? [ATAJO_PRODUCTOS] : []), ...(esAdminOSupervisor ? [ATAJO_CUENTAS_PAGAR] : [])];
 
   return (
     <div className="flex h-full flex-col items-center justify-center gap-6 bg-white">

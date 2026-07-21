@@ -356,3 +356,104 @@ export interface FacturarComprobanteInternoResult {
   documento: Documento;
   remitos_regularizacion: Remito[];
 }
+
+// -----------------------------------------------------------------------
+// Cuentas por Pagar (ver backend/sql/012_cuentas_por_pagar.sql)
+// -----------------------------------------------------------------------
+
+export type MonedaSoportada = 'ARS' | 'USD';
+
+/** Sin CONSUMIDOR_FINAL: no aplica a un proveedor. */
+export type CondicionIvaProveedor = 'RESPONSABLE_INSCRIPTO' | 'MONOTRIBUTO' | 'EXENTO';
+
+export interface Proveedor {
+  id_proveedor: number;
+  nombre: string;
+  tipo_documento: TipoDocumentoCliente;
+  numero_documento: string;
+  condicion_iva: CondicionIvaProveedor;
+  direccion: string | null;
+  telefono: string | null;
+  email: string | null;
+  activo: boolean;
+}
+
+export interface CrearProveedorInput {
+  nombre: string;
+  tipo_documento: TipoDocumentoCliente;
+  numero_documento: string;
+  condicion_iva: CondicionIvaProveedor;
+  direccion?: string;
+  telefono?: string;
+  email?: string;
+}
+
+export interface ActualizarProveedorInput {
+  nombre?: string;
+  condicion_iva?: CondicionIvaProveedor;
+  direccion?: string | null;
+  telefono?: string | null;
+  email?: string | null;
+  activo?: boolean;
+}
+
+export type EstadoFacturaProveedor = 'PENDIENTE' | 'PARCIAL' | 'PAGADA' | 'ANULADA';
+
+export interface FacturaProveedor {
+  id_factura_proveedor: number;
+  id_proveedor: number;
+  tipo_comprobante: string;
+  punto_venta: number;
+  nro_comprobante: number;
+  fecha_emision: string;
+  fecha_vencimiento: string | null;
+  moneda: MonedaSoportada;
+  cotizacion: string;
+  importe_neto: string;
+  importe_iva: string;
+  importe_total: string;
+  saldo_pendiente: string;
+  estado: EstadoFacturaProveedor;
+}
+
+export interface CrearFacturaProveedorInput {
+  id_proveedor: number;
+  tipo_comprobante: string;
+  punto_venta: number;
+  nro_comprobante: number;
+  fecha_emision: string;
+  fecha_vencimiento?: string;
+  moneda?: MonedaSoportada;
+  cotizacion?: number;
+  importe_neto: number;
+  importe_iva?: number;
+}
+
+export type EstadoNotaCreditoProveedor = 'DISPONIBLE' | 'PARCIAL' | 'APLICADA' | 'ANULADA';
+
+export interface NotaCreditoProveedor {
+  id_nota_credito_proveedor: number;
+  id_proveedor: number;
+  id_factura_proveedor: number | null;
+  tipo_comprobante: string;
+  punto_venta: number;
+  nro_comprobante: number;
+  fecha_emision: string;
+  moneda: MonedaSoportada;
+  cotizacion: string;
+  importe_total: string;
+  saldo_disponible: string;
+  estado: EstadoNotaCreditoProveedor;
+}
+
+export interface CrearNotaCreditoProveedorInput {
+  id_proveedor: number;
+  id_factura_proveedor?: number | null;
+  tipo_comprobante: string;
+  punto_venta: number;
+  nro_comprobante: number;
+  fecha_emision: string;
+  moneda?: MonedaSoportada;
+  cotizacion?: number;
+  importe_total: number;
+}
