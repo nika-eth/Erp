@@ -49,9 +49,10 @@ export async function buscarDocumentos(filtro: FiltroHistorial): Promise<Documen
   const { rows } = await pool.query<Documento & { cliente_nombre: string; sucursal_nombre: string }>(
     `SELECT
        d.id_documento, d.id_sucursal_origen, d.nro_remito, d.fecha, d.cliente_id,
-       d.total_neto, d.tipo_documento, d.id_zona,
+       d.total_neto, d.tipo_documento, d.id_zona, d.es_fiscal,
        d.tipo_comprobante, d.punto_venta, d.nro_comprobante_afip, d.cae, d.cae_vencimiento,
        d.estado_afip, d.error_afip_mensaje,
+       d.id_documento_origen_ci, d.estado_facturacion_interna, d.estado_despacho,
        ${subconsultaItems('d')},
        c.nombre AS cliente_nombre,
        s.nombre AS sucursal_nombre

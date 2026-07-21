@@ -3,6 +3,7 @@ import { ApiError } from '../../api/client';
 import { buscarDocumentos } from '../../api/documentos';
 import { useGlobalHotkeys } from '../../hooks/useGlobalHotkeys';
 import type { Documento } from '../../types/domain';
+import { FichaDespacho } from './FichaDespacho';
 
 const ETIQUETA_TIPO: Record<Documento['tipo_documento'], string> = {
   FACTURA_A: 'Factura A',
@@ -14,8 +15,10 @@ const ETIQUETA_TIPO: Record<Documento['tipo_documento'], string> = {
 export function HistorialDocumentos({ onSalir }: { onSalir: () => void }): JSX.Element {
   const [termino, setTermino] = useState('');
   const [documentos, setDocumentos] = useState<Documento[]>([]);
+  const [indiceSeleccionado, setIndiceSeleccionado] = useState(0);
   const [buscando, setBuscando] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fichaDespachoAbierta, setFichaDespachoAbierta] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -32,6 +35,7 @@ export function HistorialDocumentos({ onSalir }: { onSalir: () => void }): JSX.E
         esNumerico && termino.trim() ? { nro_remito: Number(termino.trim()) } : { cliente: termino.trim() },
       );
       setDocumentos(resultado);
+      setIndiceSeleccionado(0);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo buscar el historial.');
     } finally {
@@ -44,7 +48,27 @@ export function HistorialDocumentos({ onSalir }: { onSalir: () => void }): JSX.E
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useGlobalHotkeys({ Escape: onSalir });
+  const documentoSeleccionado = documentos[indiceSeleccionado] ?? null;
+
+  function onKeyDownBusqueda(event: React.KeyboardEvent<HTMLInputElement>): void {
+    if (event.key === 'Enter') {
+      void buscar();
+    } else if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setIndiceSeleccionado((i) => Math.min(i + 1, documentos.length - 1));
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setIndiceSeleccionado((i) => Math.max(i - 1, 0));
+    }
+  }
+
+  useGlobalHotkeys(
+    {
+      F8: () => documentoSeleccionado && setFichaDespachoAbierta(true),
+      Escape: onSalir,
+    },
+    !fichaDespachoAbierta,
+  );
 
   return (
     <div className="flex h-full flex-col gap-4 bg-white p-6">
@@ -54,8 +78,8 @@ export function HistorialDocumentos({ onSalir }: { onSalir: () => void }): JSX.E
           ref={inputRef}
           value={termino}
           onChange={(e) => setTermino(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && void buscar()}
-          placeholder="Enter para buscar"
+          onKeyDown={onKeyDownBusqueda}
+          placeholder="Enter para buscar, ↑/↓ selecciona"
           className="w-full rounded border border-neutral-300 px-3 py-2 focus:border-acento"
         />
       </label>
@@ -76,10 +100,28 @@ export function HistorialDocumentos({ onSalir }: { onSalir: () => void }): JSX.E
             </tr>
           </thead>
           <tbody>
-            {documentos.map((d) => (
-              <tr key={d.id_documento} className="border-b border-neutral-100">
+            {documentos.map((d, i) => (
+              <tr
+                key={d.id_documento}
+                className={`border-b border-neutral-100 ${i === indiceSeleccionado ? 'bg-acento/10' : ''}`}
+              >
                 <td className="px-4 py-2 font-mono">{d.nro_remito ?? '—'}</td>
-                <td className="px-4 py-2">{ETIQUETA_TIPO[d.tipo_documento]}</td>
+                <td className="px-4 py-2">
+                  {ETIQUETA_TIPO[d.tipo_documento]}
+                  {d.tipo_documento !== 'PRESUPUESTO' && (
+                    <span
+                      className={`ml-2 rounded px-1.5 py-0.5 text-xs font-medium ${
+                        d.es_fiscal
+                          ? 'bg-green-50 text-exito'
+                          : d.estado_facturacion_interna === 'FACTURADA'
+                            ? 'bg-neutral-100 text-neutral-500'
+                            : 'bg-amber-50 text-amber-700'
+                      }`}
+                    >
+                      {d.es_fiscal ? 'Fiscal' : d.estado_facturacion_interna === 'FACTURADA' ? 'Interno (facturado)' : 'Interno'}
+                    </span>
+                  )}
+                </td>
                 <td className="px-4 py-2">{new Date(d.fecha).toLocaleString('es-AR')}</td>
                 <td className="px-4 py-2">{d.cliente_nombre}</td>
                 <td className="px-4 py-2">{d.sucursal_nombre}</td>
@@ -97,7 +139,18 @@ export function HistorialDocumentos({ onSalir }: { onSalir: () => void }): JSX.E
         </table>
       </div>
 
-      <div className="text-xs text-neutral-400">Esc para volver</div>
+      <div className="text-xs text-neutral-400">
+        {documentoSeleccionado && documentoSeleccionado.tipo_documento !== 'PRESUPUESTO'
+          ? 'F8 ficha de despacho · Esc para volver'
+          : 'Esc para volver'}
+      </div>
+
+      {fichaDespachoAbierta && documentoSeleccionado && (
+        <FichaDespacho
+          documentoInicial={documentoSeleccionado}
+          onCerrar={() => setFichaDespachoAbierta(false)}
+        />
+      )}
     </div>
   );
 }

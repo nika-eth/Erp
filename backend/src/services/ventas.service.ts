@@ -217,8 +217,8 @@ export async function facturarVenta(
     const estadoAfipInicial: EstadoAfip = esFiscal ? 'PENDIENTE' : 'APROBADO_INTERNO';
 
     const { rows: documentoRows } = await client.query<Documento>(
-      `INSERT INTO documentos (id_sucursal_origen, fecha, cliente_id, total_neto, tipo_documento, id_zona, es_fiscal, tipo_comprobante, punto_venta, estado_afip)
-       VALUES ($1, NOW(), $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO documentos (id_sucursal_origen, fecha, cliente_id, total_neto, tipo_documento, id_zona, es_fiscal, tipo_comprobante, punto_venta, estado_afip, estado_facturacion_interna)
+       VALUES ($1, NOW(), $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING ${DOCUMENTO_COLUMNAS}`,
       [
         contexto.id_sucursal,
@@ -230,6 +230,7 @@ export async function facturarVenta(
         tipoComprobante,
         puntoVentaDocumento,
         estadoAfipInicial,
+        esFiscal ? null : 'PENDIENTE',
       ],
     );
     let documento: Documento = { ...documentoRows[0], items };

@@ -14,3 +14,7 @@ export function buscarDocumentos(filtro: FiltroHistorial): Promise<{ documentos:
   if (filtro.tipo_documento) params.set('tipo_documento', filtro.tipo_documento);
   return apiFetch(`/documentos?${params.toString()}`);
 }
+
+export function obtenerDocumento(id_documento: number): Promise<{ documento: Documento }> {
+  return apiFetch(`/documentos/${id_documento}`);
+}
