@@ -1,13 +1,14 @@
 import type { Request, Response } from 'express';
 import { AppError } from '../utils/AppError';
 import {
+  actualizarCotEnvio,
   asignarEnvio,
   listarCamiones,
   listarDocumentosPendientes,
   listarZonas,
   obtenerOcupacionDiaria,
 } from '../services/logistica.service';
-import type { AsignarEnvioInput } from '../types/domain';
+import type { ActualizarCotInput, AsignarEnvioInput } from '../types/domain';
 
 export async function getZonas(_req: Request, res: Response): Promise<void> {
   res.json({ zonas: await listarZonas() });
@@ -43,4 +44,21 @@ export async function postAsignarEnvio(req: Request, res: Response): Promise<voi
   const envio = await asignarEnvio(input);
 
   res.status(201).json({ envio });
+}
+
+/**
+ * PUT /api/logistica/envios/:id/cot
+ *
+ * Carga o corrige el Código de Operación de Traslado (COT, exigido por
+ * ARBA) de un envío ya asignado a un camión.
+ */
+export async function putActualizarCot(req: Request, res: Response): Promise<void> {
+  if (!req.user) {
+    throw AppError.unauthorized();
+  }
+
+  const input = req.body as ActualizarCotInput;
+  const envio = await actualizarCotEnvio(Number(req.params.id), input);
+
+  res.json({ envio });
 }

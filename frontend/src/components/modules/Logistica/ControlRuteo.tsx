@@ -4,6 +4,7 @@ import { obtenerOcupacionDiaria } from '../../../api/logistica';
 import { useGlobalHotkeys } from '../../../hooks/useGlobalHotkeys';
 import type { CamionJornada, EnvioAsignado } from '../../../types/domain';
 import { AsignarEnvioModal } from './AsignarEnvioModal';
+import { EditarCot } from './EditarCot';
 import { GrillaRuteoCamiones } from './GrillaRuteoCamiones';
 
 function hoyISO(): string {
@@ -15,6 +16,7 @@ export function ControlRuteo({ onSalir }: { onSalir: () => void }): JSX.Element 
   const [fecha, setFecha] = useState(hoyISO());
   const [camiones, setCamiones] = useState<CamionJornada[]>([]);
   const [asignarAbierto, setAsignarAbierto] = useState(false);
+  const [cotSeleccionado, setCotSeleccionado] = useState<{ envio: EnvioAsignado; camion: CamionJornada } | null>(null);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mensaje, setMensaje] = useState<string | null>(null);
@@ -51,13 +53,24 @@ export function ControlRuteo({ onSalir }: { onSalir: () => void }): JSX.Element 
     void cargarOcupacion();
   }
 
-  useGlobalHotkeys({
-    F1: () => setAsignarAbierto(true),
-    Escape: () => {
-      if (asignarAbierto) setAsignarAbierto(false);
-      else onSalir();
+  function onCotGuardado(envio: EnvioAsignado): void {
+    setMensaje(`COT ${envio.nro_cot} guardado para el remito #${envio.nro_remito}.`);
+    void cargarOcupacion();
+  }
+
+  const modalAbierto = asignarAbierto || cotSeleccionado !== null;
+
+  useGlobalHotkeys(
+    {
+      F1: () => setAsignarAbierto(true),
+      Escape: () => {
+        if (asignarAbierto) setAsignarAbierto(false);
+        else if (cotSeleccionado) setCotSeleccionado(null);
+        else onSalir();
+      },
     },
-  });
+    !modalAbierto,
+  );
 
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto bg-white p-6">
@@ -71,7 +84,7 @@ export function ControlRuteo({ onSalir }: { onSalir: () => void }): JSX.Element 
             className="rounded border border-neutral-300 px-3 py-1.5 focus:border-acento"
           />
         </label>
-        <div className="text-xs text-neutral-400">F1 asignar envío · Esc volver</div>
+        <div className="text-xs text-neutral-400">F1 asignar envío · click en un envío carga el COT · Esc volver</div>
       </div>
 
       {error && <p className="rounded bg-red-50 px-3 py-2 text-sm text-peligro">{error}</p>}
@@ -80,10 +93,24 @@ export function ControlRuteo({ onSalir }: { onSalir: () => void }): JSX.Element 
       {cargando && camiones.length === 0 ? (
         <p className="text-sm text-neutral-400">Cargando…</p>
       ) : (
-        <GrillaRuteoCamiones camiones={camiones} />
+        <GrillaRuteoCamiones
+          camiones={camiones}
+          onSeleccionarEnvio={(envio, camion) => setCotSeleccionado({ envio, camion })}
+        />
       )}
 
       {asignarAbierto && <AsignarEnvioModal fecha={fecha} onAsignado={onAsignado} />}
+
+      {cotSeleccionado && (
+        <EditarCot
+          envio={cotSeleccionado.envio}
+          patente={cotSeleccionado.camion.patente}
+          chofer={cotSeleccionado.camion.chofer}
+          fecha={fecha}
+          onGuardado={onCotGuardado}
+          onCancelar={() => setCotSeleccionado(null)}
+        />
+      )}
     </div>
   );
 }
