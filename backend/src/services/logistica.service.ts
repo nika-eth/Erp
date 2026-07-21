@@ -2,6 +2,7 @@ import { pool, withTransaction } from '../config/db';
 import { AppError } from '../utils/AppError';
 import { redondearMoneda } from '../utils/documento.utils';
 import type {
+  ActualizarCotInput,
   AsignarEnvioInput,
   Camion,
   CamionJornada,
@@ -77,12 +78,13 @@ export async function obtenerOcupacionDiaria(fecha: string): Promise<CamionJorna
     zona_nombre: string | null;
     casilleros_ocupados: number | null;
     kilos_asignados: string | null;
+    nro_cot: string | null;
   }>(
     `SELECT
        c.id_camion, c.chofer, c.patente, c.capacidad_casilleros, c.capacidad_kilos_max,
        e.id_envio, e.id_documento, d.nro_remito,
        cl.nombre AS cliente_nombre, z.nombre AS zona_nombre,
-       e.casilleros_ocupados, e.kilos_asignados
+       e.casilleros_ocupados, e.kilos_asignados, e.nro_cot
      FROM camiones c
      LEFT JOIN envios e ON e.id_camion = c.id_camion AND e.fecha_despacho = $1
      LEFT JOIN documentos d ON d.id_documento = e.id_documento
@@ -115,6 +117,7 @@ export async function obtenerOcupacionDiaria(fecha: string): Promise<CamionJorna
         zona: r.zona_nombre ?? '',
         casillerosRequeridos: r.casilleros_ocupados!,
         kilosTotales: Number(r.kilos_asignados),
+        nro_cot: r.nro_cot,
       };
       camion.envios.push(envio);
     }
@@ -234,6 +237,63 @@ export async function asignarEnvio(input: AsignarEnvioInput): Promise<EnvioAsign
       zona: zona.nombre,
       casillerosRequeridos: zona.casilleros_requeridos,
       kilosTotales,
+      nro_cot: null,
     };
   });
+}
+
+/**
+ * Carga el Código de Operación de Traslado (COT, exigido por ARBA) de un
+ * envío ya asignado a un camión. No afecta la asignación en sí — sólo el
+ * dato del COT — así que no hace falta transacción ni bloquear filas.
+ */
+export async function actualizarCotEnvio(id_envio: number, input: ActualizarCotInput): Promise<EnvioAsignado> {
+  const nroCot = input.nro_cot?.trim() ?? '';
+  if (!nroCot) {
+    throw AppError.badRequest('PAYLOAD_INVALIDO', 'nro_cot es requerido.');
+  }
+
+  const { rows } = await pool.query<{
+    id_envio: number;
+    id_documento: number;
+    nro_remito: number | null;
+    cliente_nombre: string;
+    zona_nombre: string;
+    casilleros_ocupados: number;
+    kilos_asignados: string;
+    nro_cot: string | null;
+  }>(
+    `UPDATE envios SET nro_cot = $1 WHERE id_envio = $2
+     RETURNING id_envio, id_documento, casilleros_ocupados, kilos_asignados, nro_cot`,
+    [nroCot, id_envio],
+  );
+  const envio = rows[0];
+  if (!envio) {
+    throw AppError.notFound('ENVIO_NO_ENCONTRADO', `No existe el envío id_envio=${id_envio}`);
+  }
+
+  const { rows: detalleRows } = await pool.query<{
+    nro_remito: number | null;
+    cliente_nombre: string;
+    zona_nombre: string | null;
+  }>(
+    `SELECT d.nro_remito, cl.nombre AS cliente_nombre, z.nombre AS zona_nombre
+     FROM documentos d
+     JOIN clientes cl ON cl.id_cliente = d.cliente_id
+     LEFT JOIN zonas z ON z.id_zona = d.id_zona
+     WHERE d.id_documento = $1`,
+    [envio.id_documento],
+  );
+  const detalle = detalleRows[0];
+
+  return {
+    id_envio: envio.id_envio,
+    id_documento: envio.id_documento,
+    nro_remito: detalle?.nro_remito ?? null,
+    cliente: detalle?.cliente_nombre ?? '',
+    zona: detalle?.zona_nombre ?? '',
+    casillerosRequeridos: envio.casilleros_ocupados,
+    kilosTotales: Number(envio.kilos_asignados),
+    nro_cot: envio.nro_cot,
+  };
 }

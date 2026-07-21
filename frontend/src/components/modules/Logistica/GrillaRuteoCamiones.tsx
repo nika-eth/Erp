@@ -1,8 +1,9 @@
-import type { CamionJornada } from '../../../types/domain';
+import type { CamionJornada, EnvioAsignado } from '../../../types/domain';
 
 interface GrillaRuteoCamionesProps {
   camiones: CamionJornada[];
   onSeleccionarCamion?: (idCamion: number) => void;
+  onSeleccionarEnvio?: (envio: EnvioAsignado, camion: CamionJornada) => void;
   camionResaltado?: number | null;
 }
 
@@ -12,7 +13,12 @@ interface GrillaRuteoCamionesProps {
  * casilleros que consume la zona del cliente) y los casilleros libres
  * restantes, tal como se armó en la referencia de diseño provista.
  */
-export function GrillaRuteoCamiones({ camiones, onSeleccionarCamion, camionResaltado }: GrillaRuteoCamionesProps): JSX.Element {
+export function GrillaRuteoCamiones({
+  camiones,
+  onSeleccionarCamion,
+  onSeleccionarEnvio,
+  camionResaltado,
+}: GrillaRuteoCamionesProps): JSX.Element {
   return (
     <div className="space-y-4">
       {camiones.map((camion) => {
@@ -56,12 +62,17 @@ export function GrillaRuteoCamiones({ camiones, onSeleccionarCamion, camionResal
               </div>
             </div>
 
-            <div className="grid h-20 grid-cols-10 gap-2 rounded-md border border-neutral-200 bg-neutral-100 p-2">
+            <div className="grid h-28 grid-cols-10 gap-2 rounded-md border border-neutral-200 bg-neutral-100 p-2">
               {camion.envios.map((envio) => (
                 <div
                   key={envio.id_envio}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSeleccionarEnvio?.(envio, camion);
+                  }}
+                  title={onSeleccionarEnvio ? 'Click para cargar/ver el COT' : undefined}
                   style={{ gridColumn: `span ${envio.casillerosRequeridos} / span ${envio.casillerosRequeridos}` }}
-                  className={`flex flex-col justify-between overflow-hidden rounded border p-2 ${
+                  className={`flex flex-col justify-between overflow-hidden rounded border p-2 ${onSeleccionarEnvio ? 'cursor-pointer' : ''} ${
                     envio.casillerosRequeridos === 3
                       ? 'border-purple-300 bg-purple-100 text-purple-900'
                       : envio.casillerosRequeridos === 2
@@ -76,6 +87,9 @@ export function GrillaRuteoCamiones({ camiones, onSeleccionarCamion, camionResal
                   <div className="flex items-end justify-between font-mono text-[11px]">
                     <span>Remito #{envio.nro_remito ?? envio.id_documento}</span>
                     <span className="font-bold">{envio.kilosTotales} kg</span>
+                  </div>
+                  <div className="text-[10px] font-semibold">
+                    {envio.nro_cot ? `COT ${envio.nro_cot}` : 'Sin COT'}
                   </div>
                 </div>
               ))}

@@ -290,6 +290,12 @@ export interface EnvioAsignado {
   zona: string;
   casillerosRequeridos: number;
   kilosTotales: number;
+  /** Código de Operación de Traslado (ARBA), cargado desde Control de Ruteo. */
+  nro_cot: string | null;
+}
+
+export interface ActualizarCotInput {
+  nro_cot: string;
 }
 
 /** Ocupación de un camión para una fecha de despacho puntual. */
