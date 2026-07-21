@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import { AppError } from '../utils/AppError';
-import { facturarVenta, guardarPresupuesto } from '../services/ventas.service';
+import { facturarComprobanteInterno, facturarVenta, guardarPresupuesto } from '../services/ventas.service';
 import type { FacturarVentaInput } from '../types/domain';
 
 /**
@@ -51,4 +51,21 @@ export async function postGuardarPresupuesto(req: Request, res: Response): Promi
   const documento = await guardarPresupuesto(req.user.id_sucursal, { cliente_id, items });
 
   res.status(201).json({ documento });
+}
+
+/**
+ * POST /api/ventas/:id/facturar-interno
+ *
+ * Convierte un Comprobante Interno ya despachado (Remito X) en una Factura
+ * fiscal A/B, generando su Remito R de regularización sin duplicar el
+ * descuento de stock.
+ */
+export async function postFacturarComprobanteInterno(req: Request, res: Response): Promise<void> {
+  if (!req.user) {
+    throw AppError.unauthorized();
+  }
+
+  const resultado = await facturarComprobanteInterno(Number(req.params.id));
+
+  res.status(201).json(resultado);
 }

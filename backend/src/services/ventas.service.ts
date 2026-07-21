@@ -8,16 +8,19 @@ import { AppError } from '../utils/AppError';
 import { DOCUMENTO_COLUMNAS, ETIQUETA_TIPO_DOCUMENTO, redondearMoneda } from '../utils/documento.utils';
 import { tipoDocumentoVentaPorCliente } from '../utils/identificacion.utils';
 import { buscarClientePorId } from './clientes.service';
+import { crearRemitosRegularizacion, recalcularEstadoDespacho } from './remitos.service';
 import type {
   CuentaEmpresa,
   Documento,
   EstadoAfip,
+  FacturarComprobanteInternoResult,
   FacturarVentaInput,
   FacturarVentaResult,
   ItemDocumento,
   ItemInput,
   MovimientoCuentaCorriente,
   Producto,
+  TipoDocumento,
 } from '../types/domain';
 
 /** Valida la forma del payload antes de tocar la base de datos. */
@@ -98,6 +101,7 @@ function calcularItems(input: ItemInput[], productos: Map<number, Producto>): { 
       kilos,
       precio_unitario: i.precio_unitario,
       subtotal,
+      cantidad_despachada_total: 0,
     };
   });
   const totalNeto = redondearMoneda(items.reduce((acc, i) => acc + i.subtotal, 0));
@@ -332,6 +336,146 @@ export async function facturarVenta(
         ? { supervisor: supervisorAutorizacion.nombreSupervisor, monto_excedido: montoExcedido }
         : undefined,
     };
+  });
+}
+
+/**
+ * Convierte un Comprobante Interno (CI, `es_fiscal:false`) en una Factura
+ * fiscal A/B, para cuando el cliente necesita el comprobante legal después
+ * de haber recibido la mercadería con un Remito X. NO genera nuevos
+ * movimientos de `cuenta_corriente`: el DEBE de la venta y los HABER de los
+ * pagos ya quedaron asentados cuando se creó el CI original — la Factura
+ * nueva es sólo el papel fiscal/AFIP que lo reemplaza, enlazado por
+ * `id_documento_origen_ci`.
+ *
+ * Por cada Remito X no anulado del CI, `crearRemitosRegularizacion` emite un
+ * Remito R gemelo (`es_regularizacion_stock:true`) SIN volver a descontar
+ * stock — la mercadería ya salió físicamente con el X (ver
+ * `remitos.service.ts`). También copia `cantidad_despachada_total` del CI a
+ * la Factura nueva, para que el saldo pendiente de despacho no se resetee.
+ */
+export async function facturarComprobanteInterno(id_documento_ci: number): Promise<FacturarComprobanteInternoResult> {
+  return withTransaction(async (client) => {
+    const { rows: ciRows } = await client.query<{
+      id_documento: number;
+      id_sucursal_origen: number;
+      cliente_id: number;
+      total_neto: string;
+      tipo_documento: TipoDocumento;
+      id_zona: number | null;
+      es_fiscal: boolean;
+      estado_facturacion_interna: string | null;
+    }>(
+      `SELECT id_documento, id_sucursal_origen, cliente_id, total_neto, tipo_documento, id_zona, es_fiscal,
+              estado_facturacion_interna
+       FROM documentos WHERE id_documento = $1 FOR UPDATE`,
+      [id_documento_ci],
+    );
+    const ci = ciRows[0];
+    if (!ci) {
+      throw AppError.notFound('DOCUMENTO_NO_ENCONTRADO', `No existe el documento id_documento=${id_documento_ci}`);
+    }
+    if (ci.es_fiscal) {
+      throw AppError.badRequest('DOCUMENTO_YA_FISCAL', 'El documento ya es una Factura fiscal, no es un Comprobante Interno.');
+    }
+    if (ci.estado_facturacion_interna === 'FACTURADA') {
+      throw AppError.conflict('YA_FACTURADO', 'Este Comprobante Interno ya fue facturado fiscalmente.');
+    }
+
+    const cliente = await buscarClientePorId(ci.cliente_id, client);
+    const tipoComprobante = TIPO_COMPROBANTE_AFIP[ci.tipo_documento as 'FACTURA_A' | 'FACTURA_B'];
+
+    const { rows: nuevaRows } = await client.query<Documento>(
+      `INSERT INTO documentos (id_sucursal_origen, fecha, cliente_id, total_neto, tipo_documento, id_zona,
+                                es_fiscal, tipo_comprobante, punto_venta, estado_afip, id_documento_origen_ci)
+       VALUES ($1, NOW(), $2, $3, $4, $5, TRUE, $6, $7, 'PENDIENTE', $8)
+       RETURNING ${DOCUMENTO_COLUMNAS}`,
+      [
+        ci.id_sucursal_origen,
+        ci.cliente_id,
+        ci.total_neto,
+        ci.tipo_documento,
+        ci.id_zona,
+        tipoComprobante,
+        env.afip.puntoVenta,
+        ci.id_documento,
+      ],
+    );
+    let documento: Documento = { ...nuevaRows[0], items: [] };
+
+    const { rows: itemsCi } = await client.query<ItemDocumento & { cantidad_despachada_total: string }>(
+      `SELECT id_producto, sku, descripcion, unidad_venta, cantidad, peso_teorico_kg, precio_unitario, subtotal,
+              cantidad_despachada_total
+       FROM documentos_detalles WHERE id_documento = $1`,
+      [ci.id_documento],
+    );
+    const items: ItemDocumento[] = itemsCi.map((i) => ({
+      id_producto: i.id_producto,
+      sku: i.sku,
+      descripcion: i.descripcion,
+      unidad_venta: i.unidad_venta,
+      cantidad: Number(i.cantidad),
+      peso_teorico_kg: Number(i.peso_teorico_kg),
+      kilos: redondearMoneda(Number(i.cantidad) * Number(i.peso_teorico_kg)),
+      precio_unitario: Number(i.precio_unitario),
+      subtotal: Number(i.subtotal),
+      cantidad_despachada_total: Number(i.cantidad_despachada_total),
+    }));
+    await insertarDetalles(client, documento.id_documento, items);
+    await client.query(
+      `UPDATE documentos_detalles dd SET cantidad_despachada_total = ci_dd.cantidad_despachada_total
+       FROM documentos_detalles ci_dd
+       WHERE dd.id_documento = $1 AND ci_dd.id_documento = $2 AND dd.id_producto = ci_dd.id_producto`,
+      [documento.id_documento, ci.id_documento],
+    );
+    documento = { ...documento, items };
+
+    const remitosRegularizacion = await crearRemitosRegularizacion(client, {
+      id_documento_ci: ci.id_documento,
+      id_documento_factura: documento.id_documento,
+      cliente_id: ci.cliente_id,
+      id_sucursal: ci.id_sucursal_origen,
+    });
+
+    await recalcularEstadoDespacho(client, documento.id_documento);
+
+    await client.query(`UPDATE documentos SET estado_facturacion_interna = 'FACTURADA' WHERE id_documento = $1`, [
+      ci.id_documento,
+    ]);
+
+    const { neto, iva } = calcularNetoEIva(Number(ci.total_neto));
+    const resultadoAfip = await solicitarCaeParaDocumento(client, {
+      id_documento: documento.id_documento,
+      puntoVenta: env.afip.puntoVenta,
+      tipoComprobante,
+      docTipo: docTipoAfip(cliente.tipo_documento),
+      docNro: cliente.numero_documento,
+      importeTotal: Number(ci.total_neto),
+      importeNeto: neto,
+      importeIva: iva,
+      nroComprobanteAfipPrevio: null,
+    });
+
+    if (resultadoAfip.ok) {
+      const { rows } = await client.query<Documento>(
+        `UPDATE documentos SET cae = $1, cae_vencimiento = $2, estado_afip = 'APROBADO'
+         WHERE id_documento = $3 RETURNING ${DOCUMENTO_COLUMNAS}`,
+        [resultadoAfip.cae, resultadoAfip.caeVencimiento, documento.id_documento],
+      );
+      documento = { ...rows[0], items };
+    } else {
+      const { rows } = await client.query<Documento>(
+        `UPDATE documentos SET estado_afip = $1, error_afip_mensaje = $2
+         WHERE id_documento = $3 RETURNING ${DOCUMENTO_COLUMNAS}`,
+        [resultadoAfip.tipo, resultadoAfip.mensaje, documento.id_documento],
+      );
+      documento = { ...rows[0], items };
+      if (resultadoAfip.tipo === 'CONTINGENCIA') {
+        await encolarContingencia(client, documento.id_documento);
+      }
+    }
+
+    return { documento, remitos_regularizacion: remitosRegularizacion };
   });
 }
 

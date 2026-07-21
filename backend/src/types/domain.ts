@@ -97,7 +97,14 @@ export interface ItemDocumento {
   kilos: number;
   precio_unitario: number;
   subtotal: number;
+  /** Suma de `remitos_detalles.cantidad_despachada` ya remitidos para este ítem (ver `sql/010_remitos.sql`). */
+  cantidad_despachada_total: number;
 }
+
+export type EstadoDespachoDocumento = 'PENDIENTE' | 'DESPACHADO_PARCIAL' | 'DESPACHADO_TOTAL';
+
+/** Sólo aplica a documentos con `es_fiscal:false` (Comprobantes Internos); `null` en los fiscales. */
+export type EstadoFacturacionInterna = 'PENDIENTE' | 'FACTURADA';
 
 export interface Documento {
   id_documento: number;
@@ -117,6 +124,9 @@ export interface Documento {
   cae_vencimiento: string | null;
   estado_afip: EstadoAfip | null;
   error_afip_mensaje: string | null;
+  id_documento_origen_ci: number | null;
+  estado_facturacion_interna: EstadoFacturacionInterna | null;
+  estado_despacho: EstadoDespachoDocumento;
 }
 
 export interface MovimientoCuentaCorriente {
@@ -333,4 +343,56 @@ export interface EmitirReciboResult {
   detalles: DetallePagoRecibo[];
   movimientos: MovimientoCuentaCorriente[];
   saldo_actual: number;
+}
+
+// -----------------------------------------------------------------------
+// Remitos de entrega (ver `sql/010_remitos.sql`)
+// -----------------------------------------------------------------------
+
+/** 'R' = Fiscal (documento origen es_fiscal:true), 'X' = Interno (Comprobante Interno). */
+export type TipoRemito = 'R' | 'X';
+
+export type EstadoRemito = 'EMITIDO' | 'EN_TRANSITO' | 'ENTREGADO' | 'ANULADO';
+
+export interface RemitoDetalle {
+  id_remito_detalle: number;
+  id_producto: number;
+  sku: string;
+  descripcion: string;
+  cantidad_despachada: number;
+}
+
+export interface Remito {
+  id_remito: number;
+  nro_remito: string | null;
+  id_documento_origen: number;
+  tipo_remito: TipoRemito;
+  id_remito_origen_x: number | null;
+  es_regularizacion_stock: boolean;
+  estado: EstadoRemito;
+  cliente_id: number;
+  id_sucursal: number;
+  id_camion: number | null;
+  id_chofer: string | null;
+  fecha_emision: string;
+  motivo_anulacion: string | null;
+  id_usuario_anulo: number | null;
+  fecha_anulacion: string | null;
+  detalles: RemitoDetalle[];
+}
+
+export interface GenerarRemitoInput {
+  id_documento: number;
+  items: Array<{ id_producto: number; cantidad: number }>;
+  id_camion?: number | null;
+  id_chofer?: string | null;
+}
+
+export interface AnularRemitoInput {
+  motivo: string;
+}
+
+export interface FacturarComprobanteInternoResult {
+  documento: Documento;
+  remitos_regularizacion: Remito[];
 }
