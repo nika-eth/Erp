@@ -12,6 +12,12 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    env:
+      # No hay Postgres real en este job (los tests mockean `pg`); estos
+      # valores sólo satisfacen `required()` en `config/env.ts`, que ya no
+      # tiene fallback hardcodeado para secretos.
+      JWT_SECRET: ci-test-secret-no-usar-en-produccion
+      PGPASSWORD: ci-test-password
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
