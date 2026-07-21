@@ -8,6 +8,7 @@ import { documentosRouter } from './documentos.routes';
 import { logisticaRouter } from './logistica.routes';
 import { productosRouter } from './productos.routes';
 import { recibosRouter } from './recibos.routes';
+import { remitosRouter } from './remitos.routes';
 import { ventasRouter } from './ventas.routes';
 
 export const apiRouter = Router();
@@ -21,4 +22,5 @@ apiRouter.use('/documentos', documentosRouter);
 apiRouter.use('/logistica', logisticaRouter);
 apiRouter.use('/productos', productosRouter);
 apiRouter.use('/recibos', recibosRouter);
+apiRouter.use('/remitos', remitosRouter);
 apiRouter.use('/ventas', ventasRouter);

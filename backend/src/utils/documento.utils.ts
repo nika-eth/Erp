@@ -23,7 +23,8 @@ export const ETIQUETA_TIPO_DOCUMENTO: Record<TipoDocumento, string> = {
  */
 export const DOCUMENTO_COLUMNAS = `
   id_documento, id_sucursal_origen, nro_remito, fecha, cliente_id, total_neto, tipo_documento, id_zona,
-  es_fiscal, tipo_comprobante, punto_venta, nro_comprobante_afip, cae, cae_vencimiento, estado_afip, error_afip_mensaje
+  es_fiscal, tipo_comprobante, punto_venta, nro_comprobante_afip, cae, cae_vencimiento, estado_afip, error_afip_mensaje,
+  id_documento_origen_ci, estado_facturacion_interna, estado_despacho
 `;
 
 /**
@@ -42,7 +43,8 @@ export function subconsultaItems(alias: string): string {
       'peso_teorico_kg', dd.peso_teorico_kg,
       'kilos', ROUND(dd.cantidad * dd.peso_teorico_kg, 2),
       'precio_unitario', dd.precio_unitario,
-      'subtotal', dd.subtotal
+      'subtotal', dd.subtotal,
+      'cantidad_despachada_total', dd.cantidad_despachada_total
     ) ORDER BY dd.id_documento_detalle)
     FROM documentos_detalles dd
     WHERE dd.id_documento = ${alias}.id_documento
