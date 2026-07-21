@@ -50,16 +50,26 @@ export interface CuentaEmpresa {
   nombre_cuenta: string;
 }
 
-export interface MaterialCatalogo {
-  id_material: string;
+/**
+ * KILO   -> subtotal = (cantidad * peso_teorico_kg) * precio_unitario ($/kg)
+ * UNIDAD -> subtotal = cantidad * precio_unitario ($/unidad)
+ */
+export type UnidadVentaProducto = 'KILO' | 'UNIDAD';
+
+export interface Producto {
+  id_producto: number;
+  sku: string;
   descripcion: string;
-  unidad: 'metro' | 'unidad';
-  peso_teorico_kg: number;
+  unidad_venta: UnidadVentaProducto;
+  peso_teorico_kg: string;
+  activo: boolean;
 }
 
 export interface ItemDocumento {
-  id_material: string;
+  id_producto: number;
+  sku: string;
   descripcion: string;
+  unidad_venta: UnidadVentaProducto;
   cantidad: number;
   peso_teorico_kg: number;
   kilos: number;
@@ -129,12 +139,19 @@ export interface PagoInput {
   monto: number;
 }
 
+/** Lo mínimo que viaja al backend por ítem: el resto (descripción, unidad_venta, peso) se resuelve server-side contra `productos`. */
 export interface ItemInput {
-  id_material: string;
-  descripcion: string;
+  id_producto: number;
   cantidad: number;
-  peso_teorico_kg: number;
   precio_unitario: number;
+}
+
+/** Ítem en el carrito de Carga Unificada, con los datos del producto ya resueltos para mostrar en pantalla antes de facturar. */
+export interface ItemCarrito extends ItemInput {
+  sku: string;
+  descripcion: string;
+  unidad_venta: UnidadVentaProducto;
+  peso_teorico_kg: number;
 }
 
 export interface FacturarVentaInput {

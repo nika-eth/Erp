@@ -18,13 +18,16 @@ const CLIENTE = {
 
 const CUENTAS_EMPRESA: Record<number, string> = { 1: 'Efectivo' };
 
-const ITEM = {
-  id_material: 'HRA-12',
+const PRODUCTO_HIERRO = {
+  id_producto: 1,
+  sku: 'HRA-12',
   descripcion: 'Hierro Redondo Aletado 12mm',
-  cantidad: 10,
-  peso_teorico_kg: 0.888,
-  precio_unitario: 1200,
+  unidad_venta: 'KILO',
+  peso_teorico_kg: '0.888',
+  activo: true,
 };
+
+const ITEM = { id_producto: 1, cantidad: 10, precio_unitario: 1200 };
 // subtotal/total = 10656
 
 let PIN_HASH: string;
@@ -39,6 +42,9 @@ function handlerBase(opts: { saldoActual?: number; supervisorPinHash?: string | 
   let ultimoDocumento: Record<string, unknown> | null = null;
 
   return (sql: string, params: unknown[]): MockQueryResult => {
+    if (/FROM productos WHERE id_producto = ANY/.test(sql)) {
+      return { rows: [PRODUCTO_HIERRO] };
+    }
     if (/FROM clientes WHERE id_cliente/.test(sql)) {
       return { rows: [CLIENTE] };
     }
@@ -56,8 +62,9 @@ function handlerBase(opts: { saldoActual?: number; supervisorPinHash?: string | 
       const ids = params[0] as number[];
       return { rows: ids.map((id) => ({ id_cuenta: id, nombre_cuenta: CUENTAS_EMPRESA[id] })) };
     }
-    if (/INSERT INTO documentos/.test(sql)) {
-      const [id_sucursal_origen, cliente_id, total_neto, tipo_documento, items, id_zona, es_fiscal, tipo_comprobante, punto_venta, estado_afip] =
+    if (/INSERT INTO documentos_detalles/.test(sql)) return { rows: [] };
+    if (/INSERT INTO documentos\s*\(/.test(sql)) {
+      const [id_sucursal_origen, cliente_id, total_neto, tipo_documento, id_zona, es_fiscal, tipo_comprobante, punto_venta, estado_afip] =
         params;
       ultimoDocumento = {
         id_documento: contadorId++,
@@ -67,7 +74,6 @@ function handlerBase(opts: { saldoActual?: number; supervisorPinHash?: string | 
         cliente_id,
         total_neto: String(total_neto),
         tipo_documento,
-        items: JSON.parse(items as string),
         id_zona,
         es_fiscal,
         tipo_comprobante,

@@ -6,6 +6,7 @@ import { clientesRouter } from './clientes.routes';
 import { cuentaCorrienteRouter } from './cuentaCorriente.routes';
 import { documentosRouter } from './documentos.routes';
 import { logisticaRouter } from './logistica.routes';
+import { productosRouter } from './productos.routes';
 import { recibosRouter } from './recibos.routes';
 import { ventasRouter } from './ventas.routes';
 
@@ -18,5 +19,6 @@ apiRouter.use('/clientes', clientesRouter);
 apiRouter.use('/cuenta-corriente', cuentaCorrienteRouter);
 apiRouter.use('/documentos', documentosRouter);
 apiRouter.use('/logistica', logisticaRouter);
+apiRouter.use('/productos', productosRouter);
 apiRouter.use('/recibos', recibosRouter);
 apiRouter.use('/ventas', ventasRouter);

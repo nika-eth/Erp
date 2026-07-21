@@ -15,7 +15,9 @@ import type {
   FacturarVentaInput,
   FacturarVentaResult,
   ItemDocumento,
+  ItemInput,
   MovimientoCuentaCorriente,
+  Producto,
 } from '../types/domain';
 
 /** Valida la forma del payload antes de tocar la base de datos. */
@@ -30,10 +32,13 @@ function validarPayload(input: FacturarVentaInput): void {
     throw AppError.badRequest('PAYLOAD_INVALIDO', 'La venta debe tener al menos un medio de pago cargado.');
   }
   for (const item of input.items) {
-    if (item.cantidad <= 0 || item.peso_teorico_kg <= 0 || item.precio_unitario <= 0) {
+    if (!Number.isInteger(item.id_producto) || item.id_producto <= 0) {
+      throw AppError.badRequest('PAYLOAD_INVALIDO', 'Cada ítem requiere id_producto válido.');
+    }
+    if (item.cantidad <= 0 || item.precio_unitario <= 0) {
       throw AppError.badRequest(
         'PAYLOAD_INVALIDO',
-        `Ítem "${item.descripcion}" inválido: cantidad, peso_teorico_kg y precio_unitario deben ser positivos.`,
+        `Ítem id_producto=${item.id_producto} inválido: cantidad y precio_unitario deben ser positivos.`,
       );
     }
   }
@@ -44,16 +49,52 @@ function validarPayload(input: FacturarVentaInput): void {
   }
 }
 
-/** Calcula kilos y subtotal por ítem, y el total neto de la venta. */
-function calcularItems(input: FacturarVentaInput['items']): { items: ItemDocumento[]; totalNeto: number } {
+/**
+ * `descripcion`, `unidad_venta` y `peso_teorico_kg` se resuelven acá, no se
+ * confía en lo que mande el cliente (ver `ItemInput`). `activo = FALSE` se
+ * rechaza: un producto dado de baja no se puede seguir vendiendo.
+ */
+async function obtenerProductos(ids: number[], client?: PoolClient): Promise<Map<number, Producto>> {
+  const runner = client ?? pool;
+  const { rows } = await runner.query<Producto>(
+    `SELECT id_producto, sku, descripcion, unidad_venta, peso_teorico_kg, activo FROM productos WHERE id_producto = ANY($1::int[])`,
+    [ids],
+  );
+  const mapa = new Map(rows.map((r) => [r.id_producto, r]));
+  const faltantes = ids.filter((id) => !mapa.has(id));
+  if (faltantes.length > 0) {
+    throw AppError.badRequest('PRODUCTO_INVALIDO', `No existen los productos: ${faltantes.join(', ')}`);
+  }
+  const inactivos = rows.filter((r) => !r.activo).map((r) => r.sku);
+  if (inactivos.length > 0) {
+    throw AppError.badRequest('PRODUCTO_INACTIVO', `Producto(s) dado(s) de baja, no se pueden vender: ${inactivos.join(', ')}`);
+  }
+  return mapa;
+}
+
+/**
+ * Calcula kilos y subtotal por ítem, y el total neto de la venta.
+ *   KILO   -> subtotal = (cantidad * peso_teorico_kg) * precio_unitario ($/kg)
+ *   UNIDAD -> subtotal = cantidad * precio_unitario ($/unidad)
+ * `kilos` se calcula siempre igual en ambos modos: alimenta la capacidad de
+ * camión en logística, sea o no el producto el que fija el precio de venta.
+ */
+function calcularItems(input: ItemInput[], productos: Map<number, Producto>): { items: ItemDocumento[]; totalNeto: number } {
   const items: ItemDocumento[] = input.map((i) => {
-    const kilos = redondearMoneda(i.cantidad * i.peso_teorico_kg);
-    const subtotal = redondearMoneda(kilos * i.precio_unitario);
+    const producto = productos.get(i.id_producto)!;
+    const pesoTeorico = Number(producto.peso_teorico_kg);
+    const kilos = redondearMoneda(i.cantidad * pesoTeorico);
+    const subtotal =
+      producto.unidad_venta === 'KILO'
+        ? redondearMoneda(kilos * i.precio_unitario)
+        : redondearMoneda(i.cantidad * i.precio_unitario);
     return {
-      id_material: i.id_material,
-      descripcion: i.descripcion,
+      id_producto: i.id_producto,
+      sku: producto.sku,
+      descripcion: producto.descripcion,
+      unidad_venta: producto.unidad_venta,
       cantidad: i.cantidad,
-      peso_teorico_kg: i.peso_teorico_kg,
+      peso_teorico_kg: pesoTeorico,
       kilos,
       precio_unitario: i.precio_unitario,
       subtotal,
@@ -61,6 +102,27 @@ function calcularItems(input: FacturarVentaInput['items']): { items: ItemDocumen
   });
   const totalNeto = redondearMoneda(items.reduce((acc, i) => acc + i.subtotal, 0));
   return { items, totalNeto };
+}
+
+/** Una fila por ítem en `documentos_detalles` (ver `sql/009_documentos_detalles.sql`). */
+async function insertarDetalles(client: PoolClient, id_documento: number, items: ItemDocumento[]): Promise<void> {
+  for (const item of items) {
+    await client.query(
+      `INSERT INTO documentos_detalles (id_documento, id_producto, sku, descripcion, unidad_venta, cantidad, peso_teorico_kg, precio_unitario, subtotal)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        id_documento,
+        item.id_producto,
+        item.sku,
+        item.descripcion,
+        item.unidad_venta,
+        item.cantidad,
+        item.peso_teorico_kg,
+        item.precio_unitario,
+        item.subtotal,
+      ],
+    );
+  }
 }
 
 async function obtenerCuentasEmpresa(ids: number[], client: PoolClient): Promise<Map<number, CuentaEmpresa>> {
@@ -121,7 +183,8 @@ export async function facturarVenta(
 
   const cliente = await buscarClientePorId(input.cliente_id);
   const tipo_documento = tipoDocumentoVentaPorCliente(cliente.tipo_documento);
-  const { items, totalNeto } = calcularItems(input.items);
+  const productos = await obtenerProductos(input.items.map((i) => i.id_producto));
+  const { items, totalNeto } = calcularItems(input.items, productos);
 
   const totalPagos = redondearMoneda(input.pagos.reduce((acc, p) => acc + p.monto, 0));
   if (totalPagos > totalNeto) {
@@ -150,15 +213,14 @@ export async function facturarVenta(
     const estadoAfipInicial: EstadoAfip = esFiscal ? 'PENDIENTE' : 'APROBADO_INTERNO';
 
     const { rows: documentoRows } = await client.query<Documento>(
-      `INSERT INTO documentos (id_sucursal_origen, fecha, cliente_id, total_neto, tipo_documento, items, id_zona, es_fiscal, tipo_comprobante, punto_venta, estado_afip)
-       VALUES ($1, NOW(), $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10)
+      `INSERT INTO documentos (id_sucursal_origen, fecha, cliente_id, total_neto, tipo_documento, id_zona, es_fiscal, tipo_comprobante, punto_venta, estado_afip)
+       VALUES ($1, NOW(), $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING ${DOCUMENTO_COLUMNAS}`,
       [
         contexto.id_sucursal,
         input.cliente_id,
         totalNeto,
         tipo_documento,
-        JSON.stringify(items),
         cliente.id_zona,
         esFiscal,
         tipoComprobante,
@@ -166,7 +228,8 @@ export async function facturarVenta(
         estadoAfipInicial,
       ],
     );
-    let documento = documentoRows[0];
+    let documento: Documento = { ...documentoRows[0], items };
+    await insertarDetalles(client, documento.id_documento, items);
 
     let montoExcedido = 0;
     if (supervisorAutorizacion) {
@@ -247,14 +310,14 @@ export async function facturarVenta(
            WHERE id_documento = $3 RETURNING ${DOCUMENTO_COLUMNAS}`,
           [resultadoAfip.cae, resultadoAfip.caeVencimiento, documento.id_documento],
         );
-        documento = rows[0];
+        documento = { ...rows[0], items };
       } else {
         const { rows } = await client.query<Documento>(
           `UPDATE documentos SET estado_afip = $1, error_afip_mensaje = $2
            WHERE id_documento = $3 RETURNING ${DOCUMENTO_COLUMNAS}`,
           [resultadoAfip.tipo, resultadoAfip.mensaje, documento.id_documento],
         );
-        documento = rows[0];
+        documento = { ...rows[0], items };
         if (resultadoAfip.tipo === 'CONTINGENCIA') {
           await encolarContingencia(client, documento.id_documento);
         }
@@ -273,11 +336,13 @@ export async function facturarVenta(
 }
 
 /**
- * Guarda un Presupuesto: sólo cabecera en `documentos`, sin movimientos en
- * cuenta_corriente. Según la regla de negocio, el presupuesto no viaja a
- * AFIP, no descuenta stock y no debería consumir la numeración correlativa
- * de remitos de venta (eso depende de cómo el trigger de la base trate el
- * `tipo_documento = 'PRESUPUESTO'` sobre `sucursales_secuencias`).
+ * Guarda un Presupuesto: sólo cabecera en `documentos` + sus ítems en
+ * `documentos_detalles`, sin movimientos en cuenta_corriente. Según la
+ * regla de negocio, el presupuesto no viaja a AFIP, no descuenta stock y no
+ * debería consumir la numeración correlativa de remitos de venta (eso
+ * depende de cómo el trigger de la base trate el `tipo_documento =
+ * 'PRESUPUESTO'` sobre `sucursales_secuencias`). Transaccional porque ahora
+ * son dos tablas (cabecera + detalle), no un solo INSERT atómico.
  */
 export async function guardarPresupuesto(
   id_sucursal: number,
@@ -287,13 +352,18 @@ export async function guardarPresupuesto(
     throw AppError.badRequest('PAYLOAD_INVALIDO', 'El presupuesto debe tener al menos un ítem.');
   }
   await buscarClientePorId(input.cliente_id);
-  const { items, totalNeto } = calcularItems(input.items);
+  const productos = await obtenerProductos(input.items.map((i) => i.id_producto));
+  const { items, totalNeto } = calcularItems(input.items, productos);
 
-  const { rows } = await pool.query<Documento>(
-    `INSERT INTO documentos (id_sucursal_origen, fecha, cliente_id, total_neto, tipo_documento, items)
-     VALUES ($1, NOW(), $2, $3, 'PRESUPUESTO', $4::jsonb)
-     RETURNING ${DOCUMENTO_COLUMNAS}`,
-    [id_sucursal, input.cliente_id, totalNeto, JSON.stringify(items)],
-  );
-  return rows[0];
+  return withTransaction(async (client) => {
+    const { rows } = await client.query<Documento>(
+      `INSERT INTO documentos (id_sucursal_origen, fecha, cliente_id, total_neto, tipo_documento)
+       VALUES ($1, NOW(), $2, $3, 'PRESUPUESTO')
+       RETURNING ${DOCUMENTO_COLUMNAS}`,
+      [id_sucursal, input.cliente_id, totalNeto],
+    );
+    const documento: Documento = { ...rows[0], items };
+    await insertarDetalles(client, documento.id_documento, items);
+    return documento;
+  });
 }
