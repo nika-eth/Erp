@@ -18,14 +18,14 @@ export const env = {
     port: Number(process.env.PGPORT ?? 5432),
     database: required('PGDATABASE', 'erp_metalurgica'),
     user: required('PGUSER', 'postgres'),
-    password: required('PGPASSWORD', 'postgres'),
+    password: required('PGPASSWORD'),
     poolMax: Number(process.env.PG_POOL_MAX ?? 10),
     /** Neon (y la mayoría de los Postgres gestionados) exigen TLS. Ver PGSSL en .env.example. */
     ssl: process.env.PGSSL === 'true',
   },
 
   jwt: {
-    secret: required('JWT_SECRET', 'dev-secret-cambiar'),
+    secret: required('JWT_SECRET'),
     expiresIn: process.env.JWT_EXPIRES_IN ?? '12h',
   },
 
