@@ -111,7 +111,7 @@ describe('GET /api/documentos', () => {
   });
 
   it('un ADMIN puede filtrar libremente por cualquier id_sucursal', async () => {
-    setQueryHandler((sql, params): MockQueryResult => {
+    setQueryHandler((_sql, params): MockQueryResult => {
       expect(params).toContain(2);
       return { rows: [] };
     });
