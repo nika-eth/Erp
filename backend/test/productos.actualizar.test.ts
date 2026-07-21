@@ -33,7 +33,7 @@ beforeEach(() => {
 
 describe('PATCH /api/productos/:id', () => {
   it('actualiza peso_teorico_kg', async () => {
-    const token = crearToken();
+    const token = crearToken({ rol: 'ADMIN' });
 
     const res = await request(app)
       .patch('/api/productos/5')
@@ -45,7 +45,7 @@ describe('PATCH /api/productos/:id', () => {
   });
 
   it('rechaza con 400 un peso negativo', async () => {
-    const token = crearToken();
+    const token = crearToken({ rol: 'ADMIN' });
 
     const res = await request(app)
       .patch('/api/productos/5')
@@ -57,7 +57,7 @@ describe('PATCH /api/productos/:id', () => {
   });
 
   it('rechaza con 400 una unidad_venta inválida', async () => {
-    const token = crearToken();
+    const token = crearToken({ rol: 'ADMIN' });
 
     const res = await request(app)
       .patch('/api/productos/5')
@@ -69,7 +69,7 @@ describe('PATCH /api/productos/:id', () => {
   });
 
   it('rechaza con 400 una descripción vacía', async () => {
-    const token = crearToken();
+    const token = crearToken({ rol: 'ADMIN' });
 
     const res = await request(app)
       .patch('/api/productos/5')
@@ -81,7 +81,7 @@ describe('PATCH /api/productos/:id', () => {
   });
 
   it('rechaza con 400 si no se envía ningún campo', async () => {
-    const token = crearToken();
+    const token = crearToken({ rol: 'ADMIN' });
 
     const res = await request(app)
       .patch('/api/productos/5')
@@ -94,7 +94,7 @@ describe('PATCH /api/productos/:id', () => {
 
   it('responde 404 si el producto no existe', async () => {
     setQueryHandler(crearHandler({ productoActualizado: null }));
-    const token = crearToken();
+    const token = crearToken({ rol: 'ADMIN' });
 
     const res = await request(app)
       .patch('/api/productos/999')
@@ -110,5 +110,17 @@ describe('PATCH /api/productos/:id', () => {
 
     expect(res.status).toBe(401);
     expect(res.body.error).toBe('NO_AUTORIZADO');
+  });
+
+  it('rechaza con 403 a un usuario que no es ADMIN', async () => {
+    const token = crearToken({ rol: 'VENDEDOR' });
+
+    const res = await request(app)
+      .patch('/api/productos/5')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ peso_teorico_kg: 1 });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('ACCESO_DENEGADO');
   });
 });
