@@ -28,7 +28,7 @@ export function clearToken(): void {
 }
 
 interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   auth?: boolean;
   /** Headers adicionales, ej. `x-supervisor-pin` en el override de crédito. */

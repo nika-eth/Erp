@@ -65,6 +65,14 @@ export interface Producto {
   activo: boolean;
 }
 
+/** Edición de producto (Gestión de Productos, F7). `sku` no se puede editar. */
+export interface ActualizarProductoInput {
+  descripcion?: string;
+  unidad_venta?: UnidadVentaProducto;
+  peso_teorico_kg?: number;
+  activo?: boolean;
+}
+
 export interface ItemDocumento {
   id_producto: number;
   sku: string;

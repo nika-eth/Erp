@@ -3,6 +3,7 @@ const ATAJOS = [
   { tecla: 'F3', descripcion: 'Historial de Documentos' },
   { tecla: 'F9', descripcion: 'Ficha de Cuenta Corriente' },
   { tecla: 'F4', descripcion: 'Control de Ruteo y Ocupación Diaria' },
+  { tecla: 'F7', descripcion: 'Gestión de Productos' },
 ];
 
 /** Pantalla vacía en espera de atajos: el estado de reposo del mostrador. */

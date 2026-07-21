@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import { CargaUnificada } from './components/modules/CargaUnificada/CargaUnificada';
 import { FichaCuentaCorriente } from './components/modules/CuentaCorriente/FichaCuentaCorriente';
+import { GestionProductos } from './components/modules/GestionProductos';
 import { HistorialDocumentos } from './components/modules/HistorialDocumentos';
 import { ControlRuteo } from './components/modules/Logistica/ControlRuteo';
 import { Header } from './components/layout/Header';
@@ -9,7 +10,7 @@ import { PuntoMuerto } from './components/layout/PuntoMuerto';
 import { useAuth } from './context/AuthContext';
 import { HotkeySuspensionBoundary, useGlobalHotkeys } from './hooks/useGlobalHotkeys';
 
-type Modulo = 'PUNTO_MUERTO' | 'CARGA_UNIFICADA' | 'HISTORIAL' | 'LOGISTICA';
+type Modulo = 'PUNTO_MUERTO' | 'CARGA_UNIFICADA' | 'HISTORIAL' | 'LOGISTICA' | 'PRODUCTOS';
 
 function Mostrador(): JSX.Element {
   const [modulo, setModulo] = useState<Modulo>('PUNTO_MUERTO');
@@ -26,6 +27,7 @@ function Mostrador(): JSX.Element {
       F5: () => setModulo('CARGA_UNIFICADA'),
       F3: () => setModulo('HISTORIAL'),
       F4: () => setModulo('LOGISTICA'),
+      F7: () => setModulo('PRODUCTOS'),
     },
     modulo === 'PUNTO_MUERTO' && !fichaAbierta,
   );
@@ -45,6 +47,7 @@ function Mostrador(): JSX.Element {
           {modulo === 'CARGA_UNIFICADA' && <CargaUnificada onSalir={volverAPuntoMuerto} />}
           {modulo === 'HISTORIAL' && <HistorialDocumentos onSalir={volverAPuntoMuerto} />}
           {modulo === 'LOGISTICA' && <ControlRuteo onSalir={volverAPuntoMuerto} />}
+          {modulo === 'PRODUCTOS' && <GestionProductos onSalir={volverAPuntoMuerto} />}
         </HotkeySuspensionBoundary>
       </main>
       {fichaAbierta && <FichaCuentaCorriente onSalir={cerrarFicha} />}
