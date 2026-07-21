@@ -16,10 +16,20 @@ const ENVIO_ACTUALIZADO = {
 
 const DETALLE_DOCUMENTO = { nro_remito: 10, cliente_nombre: 'Ferreteria Real SRL', zona_nombre: 'Zona Cercana' };
 
-function crearHandler(opts: { envio?: typeof ENVIO_ACTUALIZADO | null; detalle?: typeof DETALLE_DOCUMENTO | null }) {
-  const { envio = ENVIO_ACTUALIZADO, detalle = DETALLE_DOCUMENTO } = opts;
+// Coincide con el id_sucursal por defecto de crearToken() (1).
+const SUCURSAL_ENVIO = { id_sucursal_origen: 1 };
+
+function crearHandler(opts: {
+  envio?: typeof ENVIO_ACTUALIZADO | null;
+  detalle?: typeof DETALLE_DOCUMENTO | null;
+  sucursalEnvio?: typeof SUCURSAL_ENVIO | null;
+}) {
+  const { envio = ENVIO_ACTUALIZADO, detalle = DETALLE_DOCUMENTO, sucursalEnvio = SUCURSAL_ENVIO } = opts;
 
   return (sql: string): MockQueryResult => {
+    if (/FROM envios e JOIN documentos d/.test(sql)) {
+      return { rows: sucursalEnvio ? [sucursalEnvio] : [] };
+    }
     if (/UPDATE envios SET nro_cot/.test(sql)) {
       return { rows: envio ? [envio] : [] };
     }
@@ -63,7 +73,7 @@ describe('PUT /api/logistica/envios/:id/cot', () => {
   });
 
   it('responde 404 si el envío no existe', async () => {
-    setQueryHandler(crearHandler({ envio: null }));
+    setQueryHandler(crearHandler({ envio: null, sucursalEnvio: null }));
     const token = crearToken();
 
     const res = await request(app)
@@ -80,5 +90,29 @@ describe('PUT /api/logistica/envios/:id/cot', () => {
 
     expect(res.status).toBe(401);
     expect(res.body.error).toBe('NO_AUTORIZADO');
+  });
+
+  it('rechaza con 403 si un VENDEDOR intenta cargar el COT de un envío de otra sucursal', async () => {
+    setQueryHandler(crearHandler({ sucursalEnvio: { id_sucursal_origen: 2 } }));
+    const token = crearToken({ rol: 'VENDEDOR', id_sucursal: 1 });
+
+    const res = await request(app)
+      .put('/api/logistica/envios/5/cot')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ nro_cot: '12345678' });
+
+    expect(res.status).toBe(403);
+  });
+
+  it('permite a un ADMIN cargar el COT de un envío de otra sucursal', async () => {
+    setQueryHandler(crearHandler({ sucursalEnvio: { id_sucursal_origen: 2 } }));
+    const token = crearToken({ rol: 'ADMIN', id_sucursal: 1 });
+
+    const res = await request(app)
+      .put('/api/logistica/envios/5/cot')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ nro_cot: '12345678' });
+
+    expect(res.status).toBe(200);
   });
 });

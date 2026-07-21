@@ -65,7 +65,10 @@ export async function postFacturarComprobanteInterno(req: Request, res: Response
     throw AppError.unauthorized();
   }
 
-  const resultado = await facturarComprobanteInterno(Number(req.params.id));
+  const resultado = await facturarComprobanteInterno(Number(req.params.id), {
+    rol: req.user.rol,
+    id_sucursal: req.user.id_sucursal,
+  });
 
   res.status(201).json(resultado);
 }

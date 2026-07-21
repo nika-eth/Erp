@@ -139,4 +139,28 @@ describe('POST /api/remitos/:id/anular', () => {
     expect(res.status).toBe(401);
     expect(res.body.error).toBe('NO_AUTORIZADO');
   });
+
+  it('rechaza con 403 si un VENDEDOR intenta anular un remito de otra sucursal', async () => {
+    setQueryHandler(crearHandler({ remito: { ...REMITO_EMITIDO, id_sucursal: 2 } }));
+    const token = crearToken({ rol: 'VENDEDOR', id_sucursal: 1 });
+
+    const res = await request(app)
+      .post('/api/remitos/200/anular')
+      .set('Authorization', `Bearer ${token}`)
+      .send(PAYLOAD_VALIDO);
+
+    expect(res.status).toBe(403);
+  });
+
+  it('permite a un ADMIN anular un remito de otra sucursal', async () => {
+    setQueryHandler(crearHandler({ remito: { ...REMITO_EMITIDO, id_sucursal: 2 } }));
+    const token = crearToken({ rol: 'ADMIN', id_sucursal: 1 });
+
+    const res = await request(app)
+      .post('/api/remitos/200/anular')
+      .set('Authorization', `Bearer ${token}`)
+      .send(PAYLOAD_VALIDO);
+
+    expect(res.status).toBe(200);
+  });
 });

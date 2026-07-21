@@ -12,6 +12,7 @@ import {
   resolverCantidadUnidades,
 } from '../utils/documento.utils';
 import { tipoDocumentoVentaPorCliente } from '../utils/identificacion.utils';
+import { type ContextoAcceso, verificarAccesoSucursal } from '../utils/autorizacion.utils';
 import { buscarClientePorId } from './clientes.service';
 import { crearRemitosRegularizacion, recalcularEstadoDespacho } from './remitos.service';
 import type {
@@ -361,7 +362,10 @@ export async function facturarVenta(
  * `remitos.service.ts`). También copia `cantidad_despachada_total` del CI a
  * la Factura nueva, para que el saldo pendiente de despacho no se resetee.
  */
-export async function facturarComprobanteInterno(id_documento_ci: number): Promise<FacturarComprobanteInternoResult> {
+export async function facturarComprobanteInterno(
+  id_documento_ci: number,
+  contexto: ContextoAcceso,
+): Promise<FacturarComprobanteInternoResult> {
   return withTransaction(async (client) => {
     const { rows: ciRows } = await client.query<{
       id_documento: number;
@@ -382,6 +386,7 @@ export async function facturarComprobanteInterno(id_documento_ci: number): Promi
     if (!ci) {
       throw AppError.notFound('DOCUMENTO_NO_ENCONTRADO', `No existe el documento id_documento=${id_documento_ci}`);
     }
+    verificarAccesoSucursal(contexto, ci.id_sucursal_origen);
     if (ci.es_fiscal) {
       throw AppError.badRequest('DOCUMENTO_YA_FISCAL', 'El documento ya es una Factura fiscal, no es un Comprobante Interno.');
     }

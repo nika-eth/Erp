@@ -1,5 +1,6 @@
 import { pool, withTransaction } from '../config/db';
 import { AppError } from '../utils/AppError';
+import { type ContextoAcceso, verificarAccesoSucursal } from '../utils/autorizacion.utils';
 import { redondearMoneda } from '../utils/documento.utils';
 import type {
   ActualizarCotInput,
@@ -28,7 +29,10 @@ export async function listarCamiones(): Promise<Camion[]> {
 }
 
 /** Remitos facturados (no presupuestos) que todavía no fueron asignados a ningún camión. */
-export async function listarDocumentosPendientes(): Promise<DocumentoPendiente[]> {
+export async function listarDocumentosPendientes(contexto: ContextoAcceso): Promise<DocumentoPendiente[]> {
+  const condicionSucursal = contexto.rol === 'VENDEDOR' ? 'AND d.id_sucursal_origen = $1' : '';
+  const valores = contexto.rol === 'VENDEDOR' ? [contexto.id_sucursal] : [];
+
   const { rows } = await pool.query<{
     id_documento: number;
     nro_remito: number | null;
@@ -44,9 +48,10 @@ export async function listarDocumentosPendientes(): Promise<DocumentoPendiente[]
      JOIN clientes cl ON cl.id_cliente = d.cliente_id
      LEFT JOIN zonas z ON z.id_zona = d.id_zona
      LEFT JOIN envios e ON e.id_documento = d.id_documento
-     WHERE d.tipo_documento IN ('FACTURA_A', 'FACTURA_B') AND e.id_envio IS NULL
+     WHERE d.tipo_documento IN ('FACTURA_A', 'FACTURA_B') AND e.id_envio IS NULL ${condicionSucursal}
      ORDER BY d.fecha DESC
      LIMIT 100`,
+    valores,
   );
 
   return rows.map((r) => ({
@@ -59,8 +64,15 @@ export async function listarDocumentosPendientes(): Promise<DocumentoPendiente[]
   }));
 }
 
-/** Ocupación de todos los camiones para una fecha de despacho puntual. */
-export async function obtenerOcupacionDiaria(fecha: string): Promise<CamionJornada[]> {
+/**
+ * Ocupación de todos los camiones para una fecha de despacho puntual. Un
+ * camión es un recurso físico compartido entre sucursales: si un VENDEDOR ve
+ * un envío de otra sucursal, se redactan los datos identificatorios
+ * (cliente/zona/remito) pero se mantienen `casillerosRequeridos`/
+ * `kilosTotales` reales — ocultar la ocupación real induciría a error sobre
+ * cuánto cupo queda disponible en el camión.
+ */
+export async function obtenerOcupacionDiaria(fecha: string, contexto: ContextoAcceso): Promise<CamionJornada[]> {
   if (!FECHA_REGEX.test(fecha)) {
     throw AppError.badRequest('FECHA_INVALIDA', 'fecha debe tener formato YYYY-MM-DD.');
   }
@@ -73,6 +85,7 @@ export async function obtenerOcupacionDiaria(fecha: string): Promise<CamionJorna
     capacidad_kilos_max: string;
     id_envio: number | null;
     id_documento: number | null;
+    id_sucursal_origen: number | null;
     nro_remito: number | null;
     cliente_nombre: string | null;
     zona_nombre: string | null;
@@ -82,7 +95,7 @@ export async function obtenerOcupacionDiaria(fecha: string): Promise<CamionJorna
   }>(
     `SELECT
        c.id_camion, c.chofer, c.patente, c.capacidad_casilleros, c.capacidad_kilos_max,
-       e.id_envio, e.id_documento, d.nro_remito,
+       e.id_envio, e.id_documento, d.id_sucursal_origen, d.nro_remito,
        cl.nombre AS cliente_nombre, z.nombre AS zona_nombre,
        e.casilleros_ocupados, e.kilos_asignados, e.nro_cot
      FROM camiones c
@@ -109,15 +122,16 @@ export async function obtenerOcupacionDiaria(fecha: string): Promise<CamionJorna
       camiones.set(r.id_camion, camion);
     }
     if (r.id_envio) {
+      const esForaneo = contexto.rol === 'VENDEDOR' && r.id_sucursal_origen !== contexto.id_sucursal;
       const envio: EnvioAsignado = {
         id_envio: r.id_envio,
         id_documento: r.id_documento!,
-        nro_remito: r.nro_remito,
-        cliente: r.cliente_nombre ?? '',
-        zona: r.zona_nombre ?? '',
+        nro_remito: esForaneo ? null : r.nro_remito,
+        cliente: esForaneo ? '(otra sucursal)' : r.cliente_nombre ?? '',
+        zona: esForaneo ? '' : r.zona_nombre ?? '',
         casillerosRequeridos: r.casilleros_ocupados!,
         kilosTotales: Number(r.kilos_asignados),
-        nro_cot: r.nro_cot,
+        nro_cot: esForaneo ? null : r.nro_cot,
       };
       camion.envios.push(envio);
     }
@@ -133,7 +147,7 @@ export async function obtenerOcupacionDiaria(fecha: string): Promise<CamionJorna
  * fila del camión (`SELECT ... FOR UPDATE`) para serializar asignaciones
  * concurrentes al mismo camión/día y evitar sobre-reservar cupo.
  */
-export async function asignarEnvio(input: AsignarEnvioInput): Promise<EnvioAsignado> {
+export async function asignarEnvio(input: AsignarEnvioInput, contexto: ContextoAcceso): Promise<EnvioAsignado> {
   if (!Number.isInteger(input.id_camion) || !Number.isInteger(input.id_documento)) {
     throw AppError.badRequest('PAYLOAD_INVALIDO', 'id_camion e id_documento son requeridos y deben ser enteros.');
   }
@@ -154,13 +168,14 @@ export async function asignarEnvio(input: AsignarEnvioInput): Promise<EnvioAsign
 
     const { rows: documentoRows } = await client.query<{
       id_documento: number;
+      id_sucursal_origen: number;
       nro_remito: number | null;
       tipo_documento: string;
       kilos_totales: string;
       id_zona: number | null;
       cliente_nombre: string;
     }>(
-      `SELECT d.id_documento, d.nro_remito, d.tipo_documento, d.id_zona, cl.nombre AS cliente_nombre,
+      `SELECT d.id_documento, d.id_sucursal_origen, d.nro_remito, d.tipo_documento, d.id_zona, cl.nombre AS cliente_nombre,
               COALESCE((SELECT SUM(dd.cantidad * dd.peso_teorico_kg) FROM documentos_detalles dd WHERE dd.id_documento = d.id_documento), 0) AS kilos_totales
        FROM documentos d
        JOIN clientes cl ON cl.id_cliente = d.cliente_id
@@ -171,6 +186,7 @@ export async function asignarEnvio(input: AsignarEnvioInput): Promise<EnvioAsign
     if (!documento) {
       throw AppError.notFound('DOCUMENTO_NO_ENCONTRADO', `No existe el documento id_documento=${input.id_documento}`);
     }
+    verificarAccesoSucursal(contexto, documento.id_sucursal_origen);
     if (documento.tipo_documento === 'PRESUPUESTO') {
       throw AppError.badRequest(
         'DOCUMENTO_NO_FACTURADO',
@@ -247,11 +263,25 @@ export async function asignarEnvio(input: AsignarEnvioInput): Promise<EnvioAsign
  * envío ya asignado a un camión. No afecta la asignación en sí — sólo el
  * dato del COT — así que no hace falta transacción ni bloquear filas.
  */
-export async function actualizarCotEnvio(id_envio: number, input: ActualizarCotInput): Promise<EnvioAsignado> {
+export async function actualizarCotEnvio(
+  id_envio: number,
+  input: ActualizarCotInput,
+  contexto: ContextoAcceso,
+): Promise<EnvioAsignado> {
   const nroCot = input.nro_cot?.trim() ?? '';
   if (!nroCot) {
     throw AppError.badRequest('PAYLOAD_INVALIDO', 'nro_cot es requerido.');
   }
+
+  const { rows: sucursalRows } = await pool.query<{ id_sucursal_origen: number }>(
+    `SELECT d.id_sucursal_origen FROM envios e JOIN documentos d ON d.id_documento = e.id_documento WHERE e.id_envio = $1`,
+    [id_envio],
+  );
+  const sucursalEnvio = sucursalRows[0];
+  if (!sucursalEnvio) {
+    throw AppError.notFound('ENVIO_NO_ENCONTRADO', `No existe el envío id_envio=${id_envio}`);
+  }
+  verificarAccesoSucursal(contexto, sucursalEnvio.id_sucursal_origen);
 
   const { rows } = await pool.query<{
     id_envio: number;

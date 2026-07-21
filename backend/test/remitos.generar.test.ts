@@ -217,4 +217,28 @@ describe('POST /api/remitos/generar', () => {
     expect(res.status).toBe(401);
     expect(res.body.error).toBe('NO_AUTORIZADO');
   });
+
+  it('rechaza con 403 si un VENDEDOR intenta despachar un documento de otra sucursal', async () => {
+    setQueryHandler(crearHandler({ documento: { ...DOCUMENTO_FISCAL, id_sucursal_origen: 2 } }));
+    const token = crearToken({ rol: 'VENDEDOR', id_sucursal: 1 });
+
+    const res = await request(app)
+      .post('/api/remitos/generar')
+      .set('Authorization', `Bearer ${token}`)
+      .send(PAYLOAD_VALIDO);
+
+    expect(res.status).toBe(403);
+  });
+
+  it('permite a un ADMIN despachar un documento de otra sucursal', async () => {
+    setQueryHandler(crearHandler({ documento: { ...DOCUMENTO_FISCAL, id_sucursal_origen: 2 } }));
+    const token = crearToken({ rol: 'ADMIN', id_sucursal: 1 });
+
+    const res = await request(app)
+      .post('/api/remitos/generar')
+      .set('Authorization', `Bearer ${token}`)
+      .send(PAYLOAD_VALIDO);
+
+    expect(res.status).toBe(201);
+  });
 });

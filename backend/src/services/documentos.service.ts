@@ -1,5 +1,6 @@
 import { pool } from '../config/db';
 import { AppError } from '../utils/AppError';
+import { type ContextoAcceso, verificarAccesoSucursal } from '../utils/autorizacion.utils';
 import { DOCUMENTO_COLUMNAS, subconsultaItems } from '../utils/documento.utils';
 import type { Documento, TipoDocumento } from '../types/domain';
 
@@ -67,7 +68,7 @@ export async function buscarDocumentos(filtro: FiltroHistorial): Promise<Documen
   return rows;
 }
 
-export async function obtenerDocumentoPorId(id_documento: number): Promise<Documento> {
+export async function obtenerDocumentoPorId(id_documento: number, contexto: ContextoAcceso): Promise<Documento> {
   const { rows } = await pool.query<Documento>(
     `SELECT ${DOCUMENTO_COLUMNAS}, ${subconsultaItems('documentos')} FROM documentos WHERE id_documento = $1`,
     [id_documento],
@@ -76,5 +77,6 @@ export async function obtenerDocumentoPorId(id_documento: number): Promise<Docum
   if (!documento) {
     throw AppError.notFound('DOCUMENTO_NO_ENCONTRADO', `No existe el documento id_documento=${id_documento}`);
   }
+  verificarAccesoSucursal(contexto, documento.id_sucursal_origen);
   return documento;
 }
