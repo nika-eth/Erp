@@ -1,13 +1,15 @@
 import type { Pool, PoolClient } from 'pg';
 import { pool, withTransaction } from '../config/db';
 import { AppError } from '../utils/AppError';
+import { verificarAccesoSucursal } from '../utils/autorizacion.utils';
 import { resolverCantidadUnidades } from '../utils/documento.utils';
-import type { AnularRemitoInput, GenerarRemitoInput, Remito, RemitoDetalle } from '../types/domain';
+import type { AnularRemitoInput, GenerarRemitoInput, Remito, RemitoDetalle, Rol } from '../types/domain';
 
 /** `pool.query` y `client.query` (dentro de una transacción) comparten esta forma. */
 type Queryable = Pool | PoolClient;
 
 export interface ContextoRemito {
+  rol: Rol;
   id_sucursal: number;
   id_usuario: number;
 }
@@ -53,7 +55,7 @@ async function obtenerDetallesRemito(client: Queryable, id_remito: number): Prom
  * `sql/010_remitos.sql` para el caso de uso obligatorio "5 -> 4 -> 3+2"
  * (anular + generar encadenados, cada uno en su propia transacción).
  */
-export async function generarRemito(input: GenerarRemitoInput): Promise<Remito> {
+export async function generarRemito(input: GenerarRemitoInput, contexto: ContextoRemito): Promise<Remito> {
   if (!Number.isInteger(input.id_documento)) {
     throw AppError.badRequest('PAYLOAD_INVALIDO', 'id_documento es requerido y debe ser un entero.');
   }
@@ -82,6 +84,7 @@ export async function generarRemito(input: GenerarRemitoInput): Promise<Remito> 
     if (!documento) {
       throw AppError.notFound('DOCUMENTO_NO_ENCONTRADO', `No existe el documento id_documento=${input.id_documento}`);
     }
+    verificarAccesoSucursal(contexto, documento.id_sucursal_origen);
     if (documento.tipo_documento === 'PRESUPUESTO') {
       throw AppError.badRequest(
         'DOCUMENTO_NO_FACTURADO',
@@ -209,6 +212,7 @@ export async function anularRemito(
     if (!remito) {
       throw AppError.notFound('REMITO_NO_ENCONTRADO', `No existe el remito id_remito=${id_remito}`);
     }
+    verificarAccesoSucursal(contexto, remito.id_sucursal);
     if (remito.estado === 'ANULADO') {
       throw AppError.badRequest('REMITO_YA_ANULADO', 'El remito ya está anulado.');
     }
@@ -248,7 +252,7 @@ export async function anularRemito(
   });
 }
 
-export async function listarRemitosPorDocumento(id_documento: number): Promise<Remito[]> {
+export async function listarRemitosPorDocumento(id_documento: number, contexto: ContextoRemito): Promise<Remito[]> {
   const { rows } = await pool.query<Remito>(
     `SELECT id_remito, nro_remito, id_documento_origen, tipo_remito, id_remito_origen_x, es_regularizacion_stock,
             estado, cliente_id, id_sucursal, id_camion, id_chofer, fecha_emision, motivo_anulacion,
@@ -256,10 +260,11 @@ export async function listarRemitosPorDocumento(id_documento: number): Promise<R
      FROM remitos WHERE id_documento_origen = $1 ORDER BY fecha_emision DESC`,
     [id_documento],
   );
-  for (const remito of rows) {
+  const filtrados = contexto.rol === 'VENDEDOR' ? rows.filter((r) => r.id_sucursal === contexto.id_sucursal) : rows;
+  for (const remito of filtrados) {
     remito.detalles = await obtenerDetallesRemito(pool, remito.id_remito);
   }
-  return rows;
+  return filtrados;
 }
 
 /**

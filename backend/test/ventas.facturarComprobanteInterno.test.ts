@@ -195,4 +195,28 @@ describe('POST /api/ventas/:id/facturar-interno', () => {
     expect(res.status).toBe(401);
     expect(res.body.error).toBe('NO_AUTORIZADO');
   });
+
+  it('rechaza con 403 si un VENDEDOR intenta facturar un CI de otra sucursal', async () => {
+    setQueryHandler(crearHandler({ ci: { ...CI, id_sucursal_origen: 2 } }));
+    const token = crearToken({ rol: 'VENDEDOR', id_sucursal: 1 });
+
+    const res = await request(app)
+      .post('/api/ventas/50/facturar-interno')
+      .set('Authorization', `Bearer ${token}`)
+      .send({});
+
+    expect(res.status).toBe(403);
+  });
+
+  it('permite a un ADMIN facturar un CI de otra sucursal', async () => {
+    setQueryHandler(crearHandler({ ci: { ...CI, id_sucursal_origen: 2 } }));
+    const token = crearToken({ rol: 'ADMIN', id_sucursal: 1 });
+
+    const res = await request(app)
+      .post('/api/ventas/50/facturar-interno')
+      .set('Authorization', `Bearer ${token}`)
+      .send({});
+
+    expect(res.status).toBe(201);
+  });
 });

@@ -17,10 +17,13 @@ const CAMION = {
 const ZONA_CERCANA = { id_zona: 1, nombre: 'Zona Cercana', casilleros_requeridos: 1 };
 const ZONA_LEJANA = { id_zona: 3, nombre: 'Zona Lejana', casilleros_requeridos: 3 };
 
-function documentoFacturado(overrides: Partial<{ id_zona: number | null; tipo_documento: string; kilos: number }> = {}) {
+function documentoFacturado(
+  overrides: Partial<{ id_zona: number | null; tipo_documento: string; kilos: number; id_sucursal_origen: number }> = {},
+) {
   const kilos = overrides.kilos ?? 100;
   return {
     id_documento: 50,
+    id_sucursal_origen: overrides.id_sucursal_origen ?? 1,
     nro_remito: 10,
     tipo_documento: overrides.tipo_documento ?? 'FACTURA_A',
     kilos_totales: String(kilos),
@@ -201,5 +204,29 @@ describe('POST /api/logistica/asignar-envio', () => {
 
     expect(res.status).toBe(401);
     expect(res.body.error).toBe('NO_AUTORIZADO');
+  });
+
+  it('rechaza con 403 si un VENDEDOR intenta asignar un envío de un documento de otra sucursal', async () => {
+    setQueryHandler(crearHandler({ documento: documentoFacturado({ id_sucursal_origen: 2 }) }));
+    const token = crearToken({ rol: 'VENDEDOR', id_sucursal: 1 });
+
+    const res = await request(app)
+      .post('/api/logistica/asignar-envio')
+      .set('Authorization', `Bearer ${token}`)
+      .send(PAYLOAD_VALIDO);
+
+    expect(res.status).toBe(403);
+  });
+
+  it('permite a un ADMIN asignar un envío de un documento de otra sucursal', async () => {
+    setQueryHandler(crearHandler({ documento: documentoFacturado({ id_sucursal_origen: 2 }) }));
+    const token = crearToken({ rol: 'ADMIN', id_sucursal: 1 });
+
+    const res = await request(app)
+      .post('/api/logistica/asignar-envio')
+      .set('Authorization', `Bearer ${token}`)
+      .send(PAYLOAD_VALIDO);
+
+    expect(res.status).toBe(201);
   });
 });

@@ -16,7 +16,11 @@ export async function postGenerarRemito(req: Request, res: Response): Promise<vo
   }
 
   const input = req.body as GenerarRemitoInput;
-  const remito = await generarRemito(input);
+  const remito = await generarRemito(input, {
+    rol: req.user.rol,
+    id_sucursal: req.user.id_sucursal,
+    id_usuario: req.user.id_usuario,
+  });
 
   res.status(201).json({ remito });
 }
@@ -35,7 +39,7 @@ export async function postAnularRemito(req: Request, res: Response): Promise<voi
   const input = req.body as AnularRemitoInput;
   const remito = await anularRemito(
     Number(req.params.id),
-    { id_sucursal: req.user.id_sucursal, id_usuario: req.user.id_usuario },
+    { rol: req.user.rol, id_sucursal: req.user.id_sucursal, id_usuario: req.user.id_usuario },
     input,
   );
 
@@ -44,6 +48,14 @@ export async function postAnularRemito(req: Request, res: Response): Promise<voi
 
 /** GET /api/remitos/documento/:id_documento */
 export async function getRemitosPorDocumento(req: Request, res: Response): Promise<void> {
-  const remitos = await listarRemitosPorDocumento(Number(req.params.id_documento));
+  if (!req.user) {
+    throw AppError.unauthorized();
+  }
+
+  const remitos = await listarRemitosPorDocumento(Number(req.params.id_documento), {
+    rol: req.user.rol,
+    id_sucursal: req.user.id_sucursal,
+    id_usuario: req.user.id_usuario,
+  });
   res.json({ remitos });
 }
