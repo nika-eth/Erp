@@ -2,14 +2,16 @@ import { useState } from 'react';
 import { useGlobalHotkeys } from '../../../hooks/useGlobalHotkeys';
 import { CargarFacturaProveedor } from './CargarFacturaProveedor';
 import { CargarNotaCreditoProveedor } from './CargarNotaCreditoProveedor';
+import { FichaEmisionOrdenPago } from './FichaEmisionOrdenPago';
 import { GestionProveedores } from './GestionProveedores';
 
-type Vista = 'MENU' | 'PROVEEDORES' | 'FACTURA' | 'NOTA_CREDITO';
+type Vista = 'MENU' | 'PROVEEDORES' | 'FACTURA' | 'NOTA_CREDITO' | 'ORDEN_PAGO';
 
 const ATAJOS = [
   { tecla: 'F1', descripcion: 'Gestión de Proveedores (alta y edición)' },
   { tecla: 'F2', descripcion: 'Cargar Factura de Proveedor' },
   { tecla: 'F3', descripcion: 'Cargar Nota de Crédito de Proveedor' },
+  { tecla: 'F4', descripcion: 'Emitir Orden de Pago' },
 ];
 
 /** Módulo de Cuentas por Pagar (F8, sólo ADMIN/SUPERVISOR). Hub de navegación hacia las pantallas de datos maestros. */
@@ -22,6 +24,7 @@ export function CuentasPorPagar({ onSalir }: { onSalir: () => void }): JSX.Eleme
       F1: () => setVista('PROVEEDORES'),
       F2: () => setVista('FACTURA'),
       F3: () => setVista('NOTA_CREDITO'),
+      F4: () => setVista('ORDEN_PAGO'),
       Escape: onSalir,
     },
     vista === 'MENU',
@@ -30,6 +33,7 @@ export function CuentasPorPagar({ onSalir }: { onSalir: () => void }): JSX.Eleme
   if (vista === 'PROVEEDORES') return <GestionProveedores onSalir={volverAlMenu} />;
   if (vista === 'FACTURA') return <CargarFacturaProveedor onSalir={volverAlMenu} />;
   if (vista === 'NOTA_CREDITO') return <CargarNotaCreditoProveedor onSalir={volverAlMenu} />;
+  if (vista === 'ORDEN_PAGO') return <FichaEmisionOrdenPago onSalir={volverAlMenu} />;
 
   return (
     <div className="flex h-full flex-col items-center justify-center gap-6 bg-white">

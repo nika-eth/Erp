@@ -457,3 +457,124 @@ export interface CrearNotaCreditoProveedorInput {
   cotizacion?: number;
   importe_total: number;
 }
+
+export type EstadoAnticipoProveedor = 'DISPONIBLE' | 'PARCIAL' | 'APLICADO' | 'ANULADO';
+
+export interface AnticipoProveedor {
+  id_anticipo_proveedor: number;
+  id_proveedor: number;
+  id_orden_pago_origen: number | null;
+  fecha: string;
+  moneda: MonedaSoportada;
+  cotizacion: string;
+  importe_total: string;
+  saldo_disponible: string;
+  estado: EstadoAnticipoProveedor;
+}
+
+// -----------------------------------------------------------------------
+// Órdenes de Pago (ver backend/src/services/ordenesPago.service.ts)
+// -----------------------------------------------------------------------
+
+export type TipoImputacionOP = 'FACTURA' | 'NOTA_CREDITO' | 'ANTICIPO';
+
+export interface ImputacionOPInput {
+  tipo: TipoImputacionOP;
+  id: number;
+  monto_imputado: number;
+}
+
+export type TipoRetencionOP = 'GANANCIAS' | 'IVA' | 'IIBB_ARBA' | 'IIBB_OTRA_JURISDICCION' | 'SUSS';
+
+/** `alicuota` es una fracción (0 a 1), no un porcentaje — 0.02 = 2%. */
+export interface RetencionOPInput {
+  tipo_retencion: TipoRetencionOP;
+  base_imponible: number;
+  alicuota: number;
+}
+
+export type TipoMedioPagoOP = 'TRANSFERENCIA' | 'CHEQUE' | 'EFECTIVO';
+
+export interface MedioPagoOPInput {
+  tipo: TipoMedioPagoOP;
+  monto: number;
+  nro_cheque?: string;
+  banco_emisor?: string;
+  fecha_pago_cheque?: string;
+  cbu_destino?: string;
+  nro_operacion?: string;
+}
+
+export interface EmitirOrdenPagoInput {
+  id_proveedor: number;
+  moneda?: MonedaSoportada;
+  fecha?: string;
+  imputaciones: ImputacionOPInput[];
+  retenciones?: RetencionOPInput[];
+  medios_pago: MedioPagoOPInput[];
+}
+
+export type EstadoOrdenPago = 'EMITIDA' | 'ANULADA';
+
+export interface OrdenPago {
+  id_orden_pago: number;
+  nro_op: string | null;
+  id_proveedor: number;
+  id_sucursal: number;
+  fecha: string;
+  moneda: MonedaSoportada;
+  total_facturas: string;
+  total_notas_credito: string;
+  total_anticipos: string;
+  total_retenciones: string;
+  neto_a_pagar: string;
+  diferencia_cambio: string;
+  estado: EstadoOrdenPago;
+  motivo_anulacion: string | null;
+  id_usuario_anulo: number | null;
+  fecha_anulacion: string | null;
+  id_usuario_emitio: number;
+}
+
+export interface OpImputacion {
+  id_op_imputacion: number;
+  id_orden_pago: number;
+  id_factura_proveedor: number | null;
+  id_nota_credito_proveedor: number | null;
+  id_anticipo_proveedor: number | null;
+  monto_imputado: string;
+}
+
+export interface OpMedioPago {
+  id_op_medio_pago: number;
+  id_orden_pago: number;
+  tipo: TipoMedioPagoOP;
+  monto: string;
+  nro_cheque: string | null;
+  banco_emisor: string | null;
+  fecha_pago_cheque: string | null;
+  cbu_destino: string | null;
+  nro_operacion: string | null;
+}
+
+export interface OpRetencion {
+  id_op_retencion: number;
+  id_orden_pago: number;
+  tipo_retencion: TipoRetencionOP;
+  base_imponible: string;
+  alicuota: string;
+  monto_retenido: string;
+  nro_certificado: string | null;
+  id_cuenta_contable: number | null;
+}
+
+export interface EmitirOrdenPagoResult {
+  orden_pago: OrdenPago;
+  imputaciones: OpImputacion[];
+  retenciones: OpRetencion[];
+  medios_pago: OpMedioPago[];
+}
+
+export interface AnularOrdenPagoInput {
+  motivo: string;
+}

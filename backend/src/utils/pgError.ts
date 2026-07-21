@@ -21,13 +21,17 @@ export const SQLSTATE_FOREIGN_KEY_VIOLATION = '23503';
 export const SQLSTATE_CHECK_VIOLATION = '23514';
 
 /**
- * El trigger de límite de crédito rebota la transacción con RAISE EXCEPTION.
- * Se detecta primero por SQLSTATE ('P0001') y, como respaldo, por el texto
- * del mensaje, ya que distintas versiones del trigger pueden usar un
- * ERRCODE custom.
+ * El trigger de límite de crédito (`fn_validar_limite_credito`, ver
+ * `003_usuarios_auth.sql`) rebota la transacción con
+ * `RAISE EXCEPTION 'Limite de credito excedido para el cliente %'`. Se
+ * detecta primero por SQLSTATE ('P0001', el que Postgres asigna a un RAISE
+ * sin ERRCODE explícito) y, como respaldo, por la frase exacta del mensaje
+ * — nunca por la palabra suelta "credit": eso también matchea, por
+ * ejemplo, cualquier error sobre `notas_credito_proveedor` (contiene
+ * "credit" dentro de "crédito"), clasificando mal un error no relacionado.
  */
 export function esErrorLimiteCredito(err: PgDatabaseError): boolean {
   if (err.code === SQLSTATE_RAISE_EXCEPTION) return true;
   const mensaje = err.message?.toLowerCase() ?? '';
-  return mensaje.includes('límite de crédito') || mensaje.includes('limite de credito') || mensaje.includes('credit');
+  return mensaje.includes('límite de crédito') || mensaje.includes('limite de credito');
 }
