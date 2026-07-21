@@ -5,7 +5,12 @@ import { docTipoAfip, TIPO_COMPROBANTE_AFIP, TIPO_COMPROBANTE_REMITO_INTERNO } f
 import { env } from '../config/env';
 import { pool, withTransaction } from '../config/db';
 import { AppError } from '../utils/AppError';
-import { DOCUMENTO_COLUMNAS, ETIQUETA_TIPO_DOCUMENTO, redondearMoneda } from '../utils/documento.utils';
+import {
+  DOCUMENTO_COLUMNAS,
+  ETIQUETA_TIPO_DOCUMENTO,
+  redondearMoneda,
+  resolverCantidadUnidades,
+} from '../utils/documento.utils';
 import { tipoDocumentoVentaPorCliente } from '../utils/identificacion.utils';
 import { buscarClientePorId } from './clientes.service';
 import { crearRemitosRegularizacion, recalcularEstadoDespacho } from './remitos.service';
@@ -86,17 +91,18 @@ function calcularItems(input: ItemInput[], productos: Map<number, Producto>): { 
   const items: ItemDocumento[] = input.map((i) => {
     const producto = productos.get(i.id_producto)!;
     const pesoTeorico = Number(producto.peso_teorico_kg);
-    const kilos = redondearMoneda(i.cantidad * pesoTeorico);
+    const cantidad = resolverCantidadUnidades(i.cantidad, i.unidad_ingreso ?? 'U', pesoTeorico, producto.sku);
+    const kilos = redondearMoneda(cantidad * pesoTeorico);
     const subtotal =
       producto.unidad_venta === 'KILO'
         ? redondearMoneda(kilos * i.precio_unitario)
-        : redondearMoneda(i.cantidad * i.precio_unitario);
+        : redondearMoneda(cantidad * i.precio_unitario);
     return {
       id_producto: i.id_producto,
       sku: producto.sku,
       descripcion: producto.descripcion,
       unidad_venta: producto.unidad_venta,
-      cantidad: i.cantidad,
+      cantidad,
       peso_teorico_kg: pesoTeorico,
       kilos,
       precio_unitario: i.precio_unitario,

@@ -17,14 +17,23 @@ const ETIQUETA_TIPO: Record<TipoDocumento, string> = {
   PRESUPUESTO: 'Presupuesto',
 };
 
-/** KILO cobra por kilo (cantidad * peso_teorico_kg * precio); UNIDAD cobra directo cantidad * precio. */
+/** KILO cobra por kilo (cantidad * peso_teorico_kg * precio); UNIDAD cobra directo cantidad * precio. `cantidadUnidades`: ver `ItemCarrito`. */
 function calcularSubtotal(item: ItemCarrito): number {
-  const monto = item.unidad_venta === 'KILO' ? item.cantidad * item.peso_teorico_kg * item.precio_unitario : item.cantidad * item.precio_unitario;
+  const monto =
+    item.unidad_venta === 'KILO'
+      ? item.cantidadUnidades * item.peso_teorico_kg * item.precio_unitario
+      : item.cantidadUnidades * item.precio_unitario;
   return Number(monto.toFixed(2));
 }
 
-function aItemInput(item: ItemCarrito): { id_producto: number; cantidad: number; precio_unitario: number } {
-  return { id_producto: item.id_producto, cantidad: item.cantidad, precio_unitario: item.precio_unitario };
+/** Manda lo tipeado tal cual (unidades o kilos, según `unidad_ingreso`): el backend re-resuelve y valida de forma independiente. */
+function aItemInput(item: ItemCarrito): { id_producto: number; cantidad: number; unidad_ingreso?: 'U' | 'KG'; precio_unitario: number } {
+  return {
+    id_producto: item.id_producto,
+    cantidad: item.cantidad,
+    unidad_ingreso: item.unidad_ingreso,
+    precio_unitario: item.precio_unitario,
+  };
 }
 
 export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Element {
@@ -272,9 +281,9 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
                   {item.descripcion}
                   <span className="ml-2 font-mono text-xs text-neutral-400">{item.sku}</span>
                 </td>
-                <td className="px-4 py-2 text-right font-mono">{item.cantidad}</td>
+                <td className="px-4 py-2 text-right font-mono">{item.cantidadUnidades}</td>
                 <td className="px-4 py-2 text-right font-mono">
-                  {(item.cantidad * item.peso_teorico_kg).toFixed(2)}
+                  {(item.cantidadUnidades * item.peso_teorico_kg).toFixed(2)}
                 </td>
                 <td className="px-4 py-2 text-right font-mono">
                   ${item.precio_unitario.toFixed(2)}

@@ -1,8 +1,62 @@
-import type { TipoDocumento } from '../types/domain';
+import { AppError } from './AppError';
+import type { TipoDocumento, UnidadIngresoCantidad } from '../types/domain';
 
 /** Redondea a 2 decimales evitando errores de coma flotante en montos. */
 export function redondearMoneda(valor: number): number {
   return Math.round((valor + Number.EPSILON) * 100) / 100;
+}
+
+/**
+ * Margen de tolerancia para la equivalencia kilos -> unidades enteras:
+ * evita que un error de redondeo de punto flotante (ej. `4.80 / 2.40` dando
+ * `1.9999999999998`) rechace una cantidad que en la práctica es exacta.
+ */
+const EPSILON_UNIDADES = 0.01;
+
+/**
+ * Los materiales se venden en unidades físicas enteras (sin fraccionamiento
+ * ni retazos), pero el vendedor puede cargar la cantidad en el mostrador
+ * como conteo de unidades ('U') o en kilos ('KG'). Esta función es la única
+ * fuente de verdad de esa conversión — la usan tanto `ventas.service.ts`
+ * (`calcularItems`) como `remitos.service.ts` (`generarRemito`) para no
+ * duplicar la tolerancia de punto flotante. Nunca confía en un valor ya
+ * resuelto por el cliente: siempre recalcula server-side.
+ */
+export function resolverCantidadUnidades(
+  cantidadIngresada: number,
+  unidadIngreso: UnidadIngresoCantidad,
+  pesoTeoricoKg: number,
+  sku: string,
+): number {
+  if (unidadIngreso === 'U') {
+    if (!Number.isInteger(cantidadIngresada)) {
+      throw AppError.badRequest(
+        'CANTIDAD_NO_ENTERA',
+        `La cantidad de unidades para ${sku} debe ser un número entero (no se venden fracciones/retazos).`,
+      );
+    }
+    return cantidadIngresada;
+  }
+
+  if (pesoTeoricoKg <= 0) {
+    throw AppError.badRequest(
+      'PESO_TEORICO_NO_CONFIGURADO',
+      `El producto ${sku} no tiene peso teórico cargado; no se puede vender por kilos (cargalo en Gestión de Productos, F7).`,
+    );
+  }
+
+  const unidadesCalculadas = cantidadIngresada / pesoTeoricoKg;
+  const unidadesEnteras = Math.round(unidadesCalculadas);
+  const diferencia = Math.abs(unidadesCalculadas - unidadesEnteras);
+
+  if (diferencia > EPSILON_UNIDADES || unidadesEnteras <= 0) {
+    throw AppError.badRequest(
+      'CANTIDAD_KG_NO_ENTERA',
+      `${cantidadIngresada}kg de ${sku} no equivale a una cantidad entera de unidades (1 U = ${pesoTeoricoKg}kg).`,
+    );
+  }
+
+  return unidadesEnteras;
 }
 
 /** Etiqueta legible para mostrar en conceptos de cuenta_corriente y UI. */

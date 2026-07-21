@@ -231,6 +231,41 @@ describe('POST /api/ventas/facturar', () => {
     expect(res.body.documento.items[0].kilos).toBe(7.5); // 3 * 2.5, informativo para logística
   });
 
+  it('acepta un ítem cargado en kilos que equivale exactamente a unidades enteras', async () => {
+    const token = crearToken();
+
+    const res = await request(app)
+      .post('/api/ventas/facturar')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        cliente_id: CLIENTE_CUIT.id_cliente,
+        items: [{ id_producto: 1, cantidad: 8.88, unidad_ingreso: 'KG', precio_unitario: 1200 }],
+        total_neto: 0,
+        pagos: [{ id_cuenta: 1, monto: 10656 }],
+      });
+
+    expect(res.status).toBe(201);
+    expect(Number(res.body.documento.total_neto)).toBe(10656);
+    expect(res.body.documento.items[0].cantidad).toBe(10); // 8.88kg / 0.888kg = 10 unidades
+  });
+
+  it('rechaza con 400 cuando los kilos cargados no equivalen a una cantidad entera de unidades', async () => {
+    const token = crearToken();
+
+    const res = await request(app)
+      .post('/api/ventas/facturar')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        cliente_id: CLIENTE_CUIT.id_cliente,
+        items: [{ id_producto: 1, cantidad: 5, unidad_ingreso: 'KG', precio_unitario: 1200 }],
+        total_neto: 0,
+        pagos: [{ id_cuenta: 1, monto: 5000 }],
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('CANTIDAD_KG_NO_ENTERA');
+  });
+
   it('detecta Factura B para clientes con DNI', async () => {
     setQueryHandler(handlerFeliz(CLIENTE_DNI));
     const token = crearToken();
