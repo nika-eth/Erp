@@ -158,9 +158,14 @@ export interface PagoInput {
 }
 
 /** Lo mínimo que viaja al backend por ítem: el resto (descripción, unidad_venta, peso) se resuelve server-side contra `productos`. */
+/** Modo en que se cargó `cantidad`: conteo de unidades o kilos a convertir (ver `resolverCantidadUnidades` en el backend). Default 'U' si no viene. */
+export type UnidadIngresoCantidad = 'U' | 'KG';
+
 export interface ItemInput {
   id_producto: number;
+  /** Tal como lo tipeó el vendedor: unidades si `unidad_ingreso` es 'U', kilos si es 'KG'. */
   cantidad: number;
+  unidad_ingreso?: UnidadIngresoCantidad;
   precio_unitario: number;
 }
 
@@ -170,6 +175,8 @@ export interface ItemCarrito extends ItemInput {
   descripcion: string;
   unidad_venta: UnidadVentaProducto;
   peso_teorico_kg: number;
+  /** Cantidad ya resuelta a unidades enteras (calculada localmente, mismo cálculo que hará el backend) — la que se muestra en la grilla del carrito. */
+  cantidadUnidades: number;
 }
 
 export interface FacturarVentaInput {
@@ -330,7 +337,7 @@ export interface Remito {
 
 export interface GenerarRemitoInput {
   id_documento: number;
-  items: Array<{ id_producto: number; cantidad: number }>;
+  items: Array<{ id_producto: number; cantidad: number; unidad_ingreso?: UnidadIngresoCantidad }>;
   id_camion?: number | null;
   id_chofer?: string | null;
 }

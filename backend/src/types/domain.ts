@@ -213,9 +213,14 @@ export interface PagoInput {
  * `obtenerProductos`), igual que `nombre_cuenta` para los pagos — así el
  * vendedor no puede alterar esos datos manipulando el request.
  */
+/** Modo en que el vendedor/despachante cargó `cantidad`: conteo de unidades o kilos a convertir. Default 'U' si no viene. */
+export type UnidadIngresoCantidad = 'U' | 'KG';
+
 export interface ItemInput {
   id_producto: number;
+  /** Tal como lo tipeó el vendedor: unidades si `unidad_ingreso` es 'U', kilos si es 'KG'. Ver `resolverCantidadUnidades`. */
   cantidad: number;
+  unidad_ingreso?: UnidadIngresoCantidad;
   precio_unitario: number;
 }
 
@@ -391,7 +396,7 @@ export interface Remito {
 
 export interface GenerarRemitoInput {
   id_documento: number;
-  items: Array<{ id_producto: number; cantidad: number }>;
+  items: Array<{ id_producto: number; cantidad: number; unidad_ingreso?: UnidadIngresoCantidad }>;
   id_camion?: number | null;
   id_chofer?: string | null;
 }

@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 import { pool, withTransaction } from '../config/db';
 import { AppError } from '../utils/AppError';
+import { resolverCantidadUnidades } from '../utils/documento.utils';
 import type { AnularRemitoInput, GenerarRemitoInput, Remito, RemitoDetalle } from '../types/domain';
 
 /** `pool.query` y `client.query` (dentro de una transacción) comparten esta forma. */
@@ -88,9 +89,16 @@ export async function generarRemito(input: GenerarRemitoInput): Promise<Remito> 
       );
     }
 
+    const itemsResueltos: Array<{ id_producto: number; cantidad: number }> = [];
+
     for (const item of input.items) {
-      const { rows: detalleRows } = await client.query<{ cantidad: string; cantidad_despachada_total: string }>(
-        `SELECT cantidad, cantidad_despachada_total FROM documentos_detalles
+      const { rows: detalleRows } = await client.query<{
+        cantidad: string;
+        cantidad_despachada_total: string;
+        peso_teorico_kg: string;
+        sku: string;
+      }>(
+        `SELECT cantidad, cantidad_despachada_total, peso_teorico_kg, sku FROM documentos_detalles
          WHERE id_documento = $1 AND id_producto = $2 FOR UPDATE`,
         [input.id_documento, item.id_producto],
       );
@@ -101,8 +109,16 @@ export async function generarRemito(input: GenerarRemitoInput): Promise<Remito> 
           `El producto id_producto=${item.id_producto} no pertenece al documento id_documento=${input.id_documento}.`,
         );
       }
+
+      const cantidad = resolverCantidadUnidades(
+        item.cantidad,
+        item.unidad_ingreso ?? 'U',
+        Number(detalle.peso_teorico_kg),
+        detalle.sku,
+      );
+
       const saldo = Number(detalle.cantidad) - Number(detalle.cantidad_despachada_total);
-      if (item.cantidad > saldo) {
+      if (cantidad > saldo) {
         throw AppError.conflict(
           'SALDO_EXCEDIDO',
           `El ítem id_producto=${item.id_producto} sólo tiene ${saldo} unidades pendientes de despacho.`,
@@ -114,12 +130,14 @@ export async function generarRemito(input: GenerarRemitoInput): Promise<Remito> 
         [item.id_producto, documento.id_sucursal_origen],
       );
       const stockDisponible = Number(stockRows[0]?.cantidad ?? 0);
-      if (item.cantidad > stockDisponible) {
+      if (cantidad > stockDisponible) {
         throw AppError.conflict(
           'STOCK_INSUFICIENTE',
           `El producto id_producto=${item.id_producto} sólo tiene ${stockDisponible} unidades en stock.`,
         );
       }
+
+      itemsResueltos.push({ id_producto: item.id_producto, cantidad });
     }
 
     const tipoRemito = documento.es_fiscal ? 'R' : 'X';
@@ -140,7 +158,7 @@ export async function generarRemito(input: GenerarRemitoInput): Promise<Remito> 
     );
     const remito = remitoRows[0];
 
-    for (const item of input.items) {
+    for (const item of itemsResueltos) {
       await client.query(
         `INSERT INTO remitos_detalles (id_remito, id_producto, cantidad_despachada) VALUES ($1, $2, $3)`,
         [remito.id_remito, item.id_producto, item.cantidad],

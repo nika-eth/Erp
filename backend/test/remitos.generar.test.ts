@@ -38,12 +38,12 @@ function remitoInsertado(documento: typeof DOCUMENTO_FISCAL) {
 
 function crearHandler(opts: {
   documento?: typeof DOCUMENTO_FISCAL | null;
-  detalle?: { cantidad: string; cantidad_despachada_total: string } | null;
+  detalle?: { cantidad: string; cantidad_despachada_total: string; peso_teorico_kg?: string; sku?: string } | null;
   stock?: { cantidad: string } | null;
 }) {
   const {
     documento = DOCUMENTO_FISCAL,
-    detalle = { cantidad: '10.000', cantidad_despachada_total: '0.000' },
+    detalle = { cantidad: '10.000', cantidad_despachada_total: '0.000', peso_teorico_kg: '2.400', sku: 'AB1500' },
     stock = { cantidad: '50.000' },
   } = opts;
 
@@ -109,6 +109,29 @@ describe('POST /api/remitos/generar', () => {
 
     expect(res.status).toBe(201);
     expect(res.body.remito.tipo_remito).toBe('X');
+  });
+
+  it('acepta un ítem cargado en kilos que equivale exactamente a unidades enteras', async () => {
+    const token = crearToken();
+
+    const res = await request(app)
+      .post('/api/remitos/generar')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ id_documento: 10, items: [{ id_producto: 19, cantidad: 4.8, unidad_ingreso: 'KG' }] });
+
+    expect(res.status).toBe(201);
+  });
+
+  it('rechaza con 400 cuando los kilos pedidos no equivalen a una cantidad entera de unidades', async () => {
+    const token = crearToken();
+
+    const res = await request(app)
+      .post('/api/remitos/generar')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ id_documento: 10, items: [{ id_producto: 19, cantidad: 5, unidad_ingreso: 'KG' }] });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('CANTIDAD_KG_NO_ENTERA');
   });
 
   it('rechaza con 409 cuando la cantidad pedida supera el saldo pendiente de despacho', async () => {

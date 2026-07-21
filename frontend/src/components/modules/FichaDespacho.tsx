@@ -4,7 +4,8 @@ import { obtenerDocumento } from '../../api/documentos';
 import { anularRemito, generarRemito, listarRemitosPorDocumento } from '../../api/remitos';
 import { facturarComprobanteInterno } from '../../api/ventas';
 import { useGlobalHotkeys } from '../../hooks/useGlobalHotkeys';
-import type { Documento, Remito } from '../../types/domain';
+import { resolverCantidadUnidades } from '../../utils/cantidad';
+import type { Documento, Remito, UnidadIngresoCantidad } from '../../types/domain';
 import { Modal } from '../common/Modal';
 
 const ETIQUETA_ESTADO_REMITO: Record<Remito['estado'], string> = {
@@ -30,6 +31,7 @@ export function FichaDespacho({ documentoInicial, onCerrar }: FichaDespachoProps
   const [documento, setDocumento] = useState(documentoInicial);
   const [remitos, setRemitos] = useState<Remito[]>([]);
   const [cantidades, setCantidades] = useState<Record<number, string>>({});
+  const [unidadesIngreso, setUnidadesIngreso] = useState<Record<number, UnidadIngresoCantidad>>({});
   const [remitoFiltro, setRemitoFiltro] = useState('');
   const [remitoIndice, setRemitoIndice] = useState(0);
   const [motivoPromptAbierto, setMotivoPromptAbierto] = useState(false);
@@ -56,14 +58,31 @@ export function FichaDespacho({ documentoInicial, onCerrar }: FichaDespachoProps
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Arranca siempre en 'U': el valor precargado es el saldo pendiente, ya
+  // expresado en unidades — si arrancara en 'KG' habría que convertirlo de
+  // entrada. Al cambiar el selector de un ítem, `onCambiarUnidadIngreso`
+  // reconvierte el valor ya tipeado para mantener la misma cantidad física.
   useEffect(() => {
     const defaults: Record<number, string> = {};
+    const unidades: Record<number, UnidadIngresoCantidad> = {};
     for (const item of documento.items) {
       const saldo = item.cantidad - item.cantidad_despachada_total;
       defaults[item.id_producto] = saldo > 0 ? String(saldo) : '';
+      unidades[item.id_producto] = 'U';
     }
     setCantidades(defaults);
+    setUnidadesIngreso(unidades);
   }, [documento]);
+
+  function onCambiarUnidadIngreso(item: Documento['items'][number], nuevaUnidad: UnidadIngresoCantidad): void {
+    setUnidadesIngreso((u) => ({ ...u, [item.id_producto]: nuevaUnidad }));
+    setCantidades((c) => {
+      const actual = Number(c[item.id_producto] || 0);
+      if (actual <= 0 || item.peso_teorico_kg <= 0) return c;
+      const convertido = nuevaUnidad === 'KG' ? actual * item.peso_teorico_kg : actual / item.peso_teorico_kg;
+      return { ...c, [item.id_producto]: String(Math.round(convertido * 100) / 100) };
+    });
+  }
 
   useEffect(() => {
     if (motivoPromptAbierto) motivoRef.current?.focus();
@@ -90,14 +109,32 @@ export function FichaDespacho({ documentoInicial, onCerrar }: FichaDespachoProps
 
   async function onGenerarRemito(): Promise<void> {
     if (procesando) return;
-    const items = documento.items
-      .map((item) => ({ id_producto: item.id_producto, cantidad: Number(cantidades[item.id_producto] || 0) }))
-      .filter((item) => item.cantidad > 0);
+    const itemsCargados = documento.items.filter((item) => Number(cantidades[item.id_producto] || 0) > 0);
 
-    if (items.length === 0) {
+    if (itemsCargados.length === 0) {
       setError('Cargá al menos una cantidad a despachar.');
       return;
     }
+
+    for (const item of itemsCargados) {
+      const unidadIngreso = unidadesIngreso[item.id_producto] ?? 'U';
+      const resolucion = resolverCantidadUnidades(Number(cantidades[item.id_producto]), unidadIngreso, item.peso_teorico_kg);
+      if (!resolucion.valido) {
+        setError(`${item.descripcion}: ${resolucion.mensaje}`);
+        return;
+      }
+      const saldo = item.cantidad - item.cantidad_despachada_total;
+      if (resolucion.cantidadUnidades > saldo) {
+        setError(`${item.descripcion}: supera el saldo pendiente (${saldo}).`);
+        return;
+      }
+    }
+
+    const items = itemsCargados.map((item) => ({
+      id_producto: item.id_producto,
+      cantidad: Number(cantidades[item.id_producto]),
+      unidad_ingreso: unidadesIngreso[item.id_producto] ?? 'U',
+    }));
 
     setProcesando(true);
     setError(null);
@@ -199,6 +236,13 @@ export function FichaDespacho({ documentoInicial, onCerrar }: FichaDespachoProps
           <tbody>
             {documento.items.map((item) => {
               const saldo = item.cantidad - item.cantidad_despachada_total;
+              const unidadIngreso = unidadesIngreso[item.id_producto] ?? 'U';
+              const cantidadTexto = cantidades[item.id_producto] ?? '';
+              const resolucion =
+                cantidadTexto !== ''
+                  ? resolverCantidadUnidades(Number(cantidadTexto), unidadIngreso, item.peso_teorico_kg)
+                  : null;
+              const excedeSaldo = resolucion?.valido && resolucion.cantidadUnidades > saldo;
               return (
                 <tr key={item.id_producto} className="border-b border-neutral-100">
                   <td className="py-1.5">{item.descripcion}</td>
@@ -206,14 +250,39 @@ export function FichaDespacho({ documentoInicial, onCerrar }: FichaDespachoProps
                   <td className="py-1.5 text-right font-mono">{item.cantidad_despachada_total}</td>
                   <td className="py-1.5 text-right">
                     {saldo > 0 ? (
-                      <input
-                        type="number"
-                        min={0}
-                        max={saldo}
-                        value={cantidades[item.id_producto] ?? ''}
-                        onChange={(e) => setCantidades((c) => ({ ...c, [item.id_producto]: e.target.value }))}
-                        className="w-24 rounded border border-neutral-300 px-2 py-1 text-right font-mono focus:border-acento"
-                      />
+                      <div className="flex flex-col items-end gap-1">
+                        <div className="flex items-center gap-1">
+                          <div className="flex text-xs">
+                            {(['U', 'KG'] as const).map((u) => (
+                              <button
+                                key={u}
+                                type="button"
+                                tabIndex={-1}
+                                disabled={u === 'KG' && item.peso_teorico_kg <= 0}
+                                onClick={() => onCambiarUnidadIngreso(item, u)}
+                                className={`rounded border px-1.5 py-1 disabled:cursor-not-allowed disabled:opacity-40 ${
+                                  unidadIngreso === u ? 'border-acento bg-acento/10 text-acento' : 'border-neutral-300 text-neutral-500'
+                                }`}
+                              >
+                                {u}
+                              </button>
+                            ))}
+                          </div>
+                          <input
+                            type="number"
+                            min={0}
+                            value={cantidadTexto}
+                            onChange={(e) => setCantidades((c) => ({ ...c, [item.id_producto]: e.target.value }))}
+                            className={`w-24 rounded border px-2 py-1 text-right font-mono focus:border-acento ${
+                              (resolucion && !resolucion.valido) || excedeSaldo ? 'border-peligro' : 'border-neutral-300'
+                            }`}
+                          />
+                        </div>
+                        {resolucion && !resolucion.valido && <span className="text-xs text-peligro">{resolucion.mensaje}</span>}
+                        {excedeSaldo && (
+                          <span className="text-xs text-peligro">Supera el saldo pendiente ({saldo}).</span>
+                        )}
+                      </div>
                     ) : (
                       <span className="text-xs text-neutral-400">Completo</span>
                     )}

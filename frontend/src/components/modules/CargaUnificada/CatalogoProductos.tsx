@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { buscarProductos } from '../../../api/productos';
+import { resolverCantidadUnidades } from '../../../utils/cantidad';
 import { Modal } from '../../common/Modal';
-import type { ItemCarrito, Producto } from '../../../types/domain';
+import type { ItemCarrito, Producto, UnidadIngresoCantidad } from '../../../types/domain';
 
 interface CatalogoProductosProps {
   onSeleccionar: (item: ItemCarrito) => void;
@@ -15,9 +16,12 @@ const ETIQUETA_UNIDAD: Record<Producto['unidad_venta'], string> = {
 /**
  * Catálogo flotante de productos (F1). Busca contra `productos` real (no un
  * catálogo hardcodeado): tipea 2+ caracteres de SKU o descripción, navega
- * con flechas, Enter elige. Según `unidad_venta` del producto elegido, pide
- * cantidad + precio por kilo (peso teórico ya cargado) o cantidad + precio
- * por unidad (sin depender del peso).
+ * con flechas, Enter elige. Los materiales se venden en unidades físicas
+ * enteras (sin fraccionamiento): el selector [U | KG] permite cargar la
+ * cantidad como conteo de unidades o en kilos — en modo KG se calcula y
+ * valida en vivo que equivalga a una cantidad entera de unidades (misma
+ * tolerancia que el backend, ver `resolverCantidadUnidades`), bloqueando el
+ * alta si no da exacto.
  */
 export function CatalogoProductos({ onSeleccionar }: CatalogoProductosProps): JSX.Element {
   const [termino, setTermino] = useState('');
@@ -25,6 +29,7 @@ export function CatalogoProductos({ onSeleccionar }: CatalogoProductosProps): JS
   const [buscando, setBuscando] = useState(false);
   const [indiceResaltado, setIndiceResaltado] = useState(0);
   const [seleccionado, setSeleccionado] = useState<Producto | null>(null);
+  const [unidadIngreso, setUnidadIngreso] = useState<UnidadIngresoCantidad>('U');
   const [cantidad, setCantidad] = useState('');
   const [precioUnitario, setPrecioUnitario] = useState('');
 
@@ -34,6 +39,12 @@ export function CatalogoProductos({ onSeleccionar }: CatalogoProductosProps): JS
   useEffect(() => {
     if (!seleccionado) inputFiltroRef.current?.focus();
     else inputCantidadRef.current?.focus();
+  }, [seleccionado]);
+
+  // Al elegir un producto, el selector U/KG arranca en el modo que sugiere
+  // su unidad_venta (precio por kilo -> default KG), pero se puede cambiar.
+  useEffect(() => {
+    if (seleccionado) setUnidadIngreso(seleccionado.unidad_venta === 'KILO' ? 'KG' : 'U');
   }, [seleccionado]);
 
   // Búsqueda debounced: espera una pausa de tipeo antes de golpear la API.
@@ -55,7 +66,7 @@ export function CatalogoProductos({ onSeleccionar }: CatalogoProductosProps): JS
   }, [termino]);
 
   const pesoTeorico = seleccionado ? Number(seleccionado.peso_teorico_kg) : 0;
-  const kilos = seleccionado ? Number(cantidad || 0) * pesoTeorico : 0;
+  const resolucion = seleccionado ? resolverCantidadUnidades(Number(cantidad || 0), unidadIngreso, pesoTeorico) : null;
 
   function onKeyDownLista(event: React.KeyboardEvent<HTMLInputElement>): void {
     if (event.key === 'ArrowDown') {
@@ -74,7 +85,7 @@ export function CatalogoProductos({ onSeleccionar }: CatalogoProductosProps): JS
   function onKeyDownCantidad(event: React.KeyboardEvent<HTMLInputElement>): void {
     if (event.key !== 'Enter') return;
     event.preventDefault();
-    if (!seleccionado || Number(cantidad) <= 0 || Number(precioUnitario) <= 0) return;
+    if (!seleccionado || !resolucion?.valido || Number(precioUnitario) <= 0) return;
     onSeleccionar({
       id_producto: seleccionado.id_producto,
       sku: seleccionado.sku,
@@ -82,6 +93,8 @@ export function CatalogoProductos({ onSeleccionar }: CatalogoProductosProps): JS
       unidad_venta: seleccionado.unidad_venta,
       peso_teorico_kg: pesoTeorico,
       cantidad: Number(cantidad),
+      unidad_ingreso: unidadIngreso,
+      cantidadUnidades: resolucion.cantidadUnidades,
       precio_unitario: Number(precioUnitario),
     });
   }
@@ -127,9 +140,31 @@ export function CatalogoProductos({ onSeleccionar }: CatalogoProductosProps): JS
           <p className="mb-4 text-xs text-neutral-400">
             SKU {seleccionado.sku} · venta {ETIQUETA_UNIDAD[seleccionado.unidad_venta]}
           </p>
+
+          <div className="mb-3">
+            <span className="mb-1 block text-neutral-600">Cargar cantidad en</span>
+            <div className="flex gap-2">
+              {(['U', 'KG'] as const).map((u) => (
+                <button
+                  key={u}
+                  type="button"
+                  tabIndex={-1}
+                  disabled={u === 'KG' && pesoTeorico <= 0}
+                  title={u === 'KG' && pesoTeorico <= 0 ? 'Este producto no tiene peso teórico cargado (Gestión de Productos, F7).' : undefined}
+                  onClick={() => setUnidadIngreso(u)}
+                  className={`flex-1 rounded border px-3 py-2 disabled:cursor-not-allowed disabled:opacity-40 ${
+                    unidadIngreso === u ? 'border-acento bg-acento/10 text-acento' : 'border-neutral-300 text-neutral-600'
+                  }`}
+                >
+                  {u === 'U' ? 'Unidades (U)' : 'Kilos (KG)'}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="mb-3 grid grid-cols-2 gap-3">
             <label className="block">
-              <span className="mb-1 block text-neutral-600">Cantidad</span>
+              <span className="mb-1 block text-neutral-600">Cantidad {unidadIngreso === 'KG' ? '(kg)' : '(unidades)'}</span>
               <input
                 ref={inputCantidadRef}
                 type="number"
@@ -138,7 +173,9 @@ export function CatalogoProductos({ onSeleccionar }: CatalogoProductosProps): JS
                 value={cantidad}
                 onChange={(e) => setCantidad(e.target.value)}
                 onKeyDown={onKeyDownCantidad}
-                className="w-full rounded border border-neutral-300 px-3 py-2 focus:border-acento"
+                className={`w-full rounded border px-3 py-2 focus:border-acento ${
+                  resolucion && !resolucion.valido && cantidad !== '' ? 'border-peligro' : 'border-neutral-300'
+                }`}
               />
             </label>
             <label className="block">
@@ -156,11 +193,17 @@ export function CatalogoProductos({ onSeleccionar }: CatalogoProductosProps): JS
               />
             </label>
           </div>
-          {seleccionado.unidad_venta === 'KILO' && (
-            <p className="text-neutral-500">
-              Kilos calculados: <span className="font-mono font-medium text-neutral-900">{kilos.toFixed(2)} kg</span>
+
+          {cantidad !== '' && resolucion && (
+            <p className={resolucion.valido ? 'text-neutral-500' : 'font-medium text-peligro'}>
+              {resolucion.valido
+                ? unidadIngreso === 'U'
+                  ? `Equivale a: ${resolucion.equivalenteKg?.toFixed(2)} kg`
+                  : `Equivale a: ${resolucion.cantidadUnidades} unidad(es)`
+                : resolucion.mensaje}
             </p>
           )}
+
           <p className="mt-3 text-xs text-neutral-400">Enter para agregar el ítem · Esc para cerrar</p>
         </div>
       )}
