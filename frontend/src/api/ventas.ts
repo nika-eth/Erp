@@ -1,5 +1,11 @@
 import { apiFetch } from './client';
-import type { Documento, FacturarVentaInput, FacturarVentaResult, ItemInput } from '../types/domain';
+import type {
+  Documento,
+  FacturarComprobanteInternoResult,
+  FacturarVentaInput,
+  FacturarVentaResult,
+  ItemInput,
+} from '../types/domain';
 
 /**
  * `pinSupervisor`, si viene, viaja como header `x-supervisor-pin` para
@@ -19,4 +25,9 @@ export function guardarPresupuesto(
   items: ItemInput[],
 ): Promise<{ documento: Documento }> {
   return apiFetch('/ventas/presupuesto', { method: 'POST', body: { cliente_id, items } });
+}
+
+/** Convierte un Comprobante Interno ya despachado en Factura fiscal (ver `FichaDespacho.tsx`). */
+export function facturarComprobanteInterno(id_documento: number): Promise<FacturarComprobanteInternoResult> {
+  return apiFetch(`/ventas/${id_documento}/facturar-interno`, { method: 'POST', body: {} });
 }
