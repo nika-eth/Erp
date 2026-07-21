@@ -10,6 +10,7 @@ const ETIQUETAS_MODULO: Record<string, string> = {
   CUENTA_CORRIENTE: 'Ficha de Cuenta Corriente (F9)',
   LOGISTICA: 'Control de Ruteo y Ocupación Diaria (F4)',
   PRODUCTOS: 'Gestión de Productos (F7)',
+  CUENTAS_PAGAR: 'Cuentas por Pagar (F8)',
 };
 
 const INTERVALO_POLL_AFIP_MS = 30_000;
