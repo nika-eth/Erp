@@ -415,3 +415,143 @@ export interface FacturarComprobanteInternoResult {
   documento: Documento;
   remitos_regularizacion: Remito[];
 }
+
+// -----------------------------------------------------------------------
+// Cuentas por Pagar (ver `sql/012_cuentas_por_pagar.sql`)
+//
+// Este incremento es sólo el CRUD de datos maestros (proveedores, facturas,
+// notas de crédito, anticipos, cotizaciones). El motor contable (asientos
+// automáticos de provisión/cancelación/retenciones) llega con el servicio
+// de emisión de Órdenes de Pago, todavía no implementado.
+// -----------------------------------------------------------------------
+
+export type MonedaSoportada = 'ARS' | 'USD';
+
+/** Sin CONSUMIDOR_FINAL: no aplica a un proveedor (ver `condicion_iva_proveedor` en la base). */
+export type CondicionIvaProveedor = 'RESPONSABLE_INSCRIPTO' | 'MONOTRIBUTO' | 'EXENTO';
+
+export interface Proveedor {
+  id_proveedor: number;
+  nombre: string;
+  tipo_documento: TipoDocumentoCliente;
+  numero_documento: string;
+  condicion_iva: CondicionIvaProveedor;
+  direccion: string | null;
+  telefono: string | null;
+  email: string | null;
+  activo: boolean;
+}
+
+export interface CrearProveedorInput {
+  nombre: string;
+  tipo_documento: TipoDocumentoCliente;
+  numero_documento: string;
+  condicion_iva: CondicionIvaProveedor;
+  direccion?: string | null;
+  telefono?: string | null;
+  email?: string | null;
+}
+
+export interface ActualizarProveedorInput {
+  nombre?: string;
+  condicion_iva?: CondicionIvaProveedor;
+  direccion?: string | null;
+  telefono?: string | null;
+  email?: string | null;
+  activo?: boolean;
+}
+
+export interface Cotizacion {
+  id_cotizacion: number;
+  moneda: MonedaSoportada;
+  fecha: string;
+  valor: string; // NUMERIC llega como string desde pg
+  id_usuario_carga: number;
+}
+
+/** Carga manual diaria del tipo de cambio (upsert por moneda+fecha). */
+export interface CargarCotizacionInput {
+  moneda: MonedaSoportada;
+  fecha: string; // 'YYYY-MM-DD'
+  valor: number;
+}
+
+export type EstadoFacturaProveedor = 'PENDIENTE' | 'PARCIAL' | 'PAGADA' | 'ANULADA';
+
+export interface FacturaProveedor {
+  id_factura_proveedor: number;
+  id_proveedor: number;
+  tipo_comprobante: string;
+  punto_venta: number;
+  nro_comprobante: number;
+  fecha_emision: string;
+  fecha_vencimiento: string | null;
+  moneda: MonedaSoportada;
+  cotizacion: string;
+  importe_neto: string;
+  importe_iva: string;
+  importe_total: string;
+  saldo_pendiente: string;
+  estado: EstadoFacturaProveedor;
+}
+
+export interface CrearFacturaProveedorInput {
+  id_proveedor: number;
+  tipo_comprobante: string;
+  punto_venta: number;
+  nro_comprobante: number;
+  fecha_emision: string;
+  fecha_vencimiento?: string | null;
+  moneda?: MonedaSoportada;
+  cotizacion?: number;
+  importe_neto: number;
+  importe_iva?: number;
+}
+
+export type EstadoNotaCreditoProveedor = 'DISPONIBLE' | 'PARCIAL' | 'APLICADA' | 'ANULADA';
+
+export interface NotaCreditoProveedor {
+  id_nota_credito_proveedor: number;
+  id_proveedor: number;
+  id_factura_proveedor: number | null;
+  tipo_comprobante: string;
+  punto_venta: number;
+  nro_comprobante: number;
+  fecha_emision: string;
+  moneda: MonedaSoportada;
+  cotizacion: string;
+  importe_total: string;
+  saldo_disponible: string;
+  estado: EstadoNotaCreditoProveedor;
+}
+
+export interface CrearNotaCreditoProveedorInput {
+  id_proveedor: number;
+  id_factura_proveedor?: number | null;
+  tipo_comprobante: string;
+  punto_venta: number;
+  nro_comprobante: number;
+  fecha_emision: string;
+  moneda?: MonedaSoportada;
+  cotizacion?: number;
+  importe_total: number;
+}
+
+export type EstadoAnticipoProveedor = 'DISPONIBLE' | 'PARCIAL' | 'APLICADO' | 'ANULADO';
+
+/**
+ * Sólo lectura en este incremento: un anticipo se origina en una Orden de
+ * Pago sin imputaciones (ver comentario en `012_cuentas_por_pagar.sql`), así
+ * que el alta llega con el servicio de emisión de OP, no acá.
+ */
+export interface AnticipoProveedor {
+  id_anticipo_proveedor: number;
+  id_proveedor: number;
+  id_orden_pago_origen: number | null;
+  fecha: string;
+  moneda: MonedaSoportada;
+  cotizacion: string;
+  importe_total: string;
+  saldo_disponible: string;
+  estado: EstadoAnticipoProveedor;
+}
