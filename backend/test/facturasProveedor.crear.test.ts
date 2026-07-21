@@ -20,9 +20,25 @@ const PAYLOAD_BASE = {
   importe_iva: 210,
 };
 
+/** El retrofit de asientos automáticos agrega estas 3 queries a toda alta de factura. */
+function manejarAsientoProvision(sql: string): MockQueryResult | undefined {
+  if (/SELECT id_cuenta_contable FROM plan_cuentas/.test(sql)) {
+    return { rows: [{ id_cuenta_contable: 1 }] };
+  }
+  if (/INSERT INTO asientos_contables/.test(sql)) {
+    return { rows: [{ id_asiento: 1 }] };
+  }
+  if (/INSERT INTO asientos_detalle/.test(sql)) {
+    return { rows: [] };
+  }
+  return undefined;
+}
+
 describe('POST /api/facturas-proveedor', () => {
   it('crea una factura y recalcula importe_total server-side (nunca confía en el total del cliente)', async () => {
     setQueryHandler((sql, params): MockQueryResult => {
+      const asiento = manejarAsientoProvision(sql);
+      if (asiento) return asiento;
       if (/INSERT INTO facturas_proveedor/.test(sql)) {
         const [id_proveedor, tipo_comprobante, punto_venta, nro_comprobante, fecha_emision, fecha_vencimiento, moneda, cotizacion, importe_neto, importe_iva, importe_total] = params;
         expect(importe_total).toBe(1210);
@@ -96,6 +112,8 @@ describe('POST /api/facturas-proveedor', () => {
 
   it('acepta una factura en USD con cotizacion explícita', async () => {
     setQueryHandler((sql, params): MockQueryResult => {
+      const asiento = manejarAsientoProvision(sql);
+      if (asiento) return asiento;
       if (/INSERT INTO facturas_proveedor/.test(sql)) {
         const [id_proveedor, tipo_comprobante, punto_venta, nro_comprobante, fecha_emision, fecha_vencimiento, moneda, cotizacion, importe_neto, importe_iva, importe_total] = params;
         expect(moneda).toBe('USD');
