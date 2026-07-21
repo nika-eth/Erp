@@ -1,5 +1,7 @@
-import { pool } from '../config/db';
+import { pool, withTransaction } from '../config/db';
 import { AppError } from '../utils/AppError';
+import { redondearMoneda } from '../utils/documento.utils';
+import { obtenerIdCuentaPorCodigo } from './planCuentas.service';
 import type {
   CrearNotaCreditoProveedorInput,
   EstadoNotaCreditoProveedor,
@@ -7,6 +9,8 @@ import type {
   NotaCreditoProveedor,
 } from '../types/domain';
 
+const CUENTA_COMPRAS = '5.2.01';
+const CUENTA_PROVEEDORES = '2.1.01';
 const MONEDAS_VALIDAS: MonedaSoportada[] = ['ARS', 'USD'];
 const TIPOS_COMPROBANTE_VALIDOS = ['NOTA_CREDITO_A', 'NOTA_CREDITO_B', 'NOTA_CREDITO_C', 'NOTA_CREDITO_M'];
 const FECHA_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -54,7 +58,17 @@ export async function buscarNotasCreditoProveedor(
   return rows;
 }
 
-/** `saldo_disponible` arranca en `importe_total` y lo va a ir descontando el servicio de imputación de OP. */
+/**
+ * Alta de nota de crédito de proveedor + asiento automático de reversa
+ * parcial (Debe Proveedores, Haber Compras), en la misma transacción — la
+ * NC reduce la deuda con el proveedor en el momento en que se recibe, no
+ * cuando después se la "aplica" contra un pago (eso es sólo trazabilidad
+ * operativa, ver `ordenesPago.service.ts`). Simplificación: no discrimina
+ * neto/IVA (la tabla no tiene esa columna), se banca todo contra Compras;
+ * no afecta el balance del asiento ni el saldo de Proveedores.
+ * `saldo_disponible` arranca en `importe_total` y lo va a ir descontando
+ * `ordenesPago.service.ts::emitirOrdenPago`.
+ */
 export async function crearNotaCreditoProveedor(
   input: CrearNotaCreditoProveedorInput,
   id_usuario_carga: number,
@@ -94,24 +108,50 @@ export async function crearNotaCreditoProveedor(
     throw AppError.badRequest('PAYLOAD_INVALIDO', 'importe_total debe ser un número mayor a 0.');
   }
 
-  const { rows } = await pool.query<NotaCreditoProveedor>(
-    `INSERT INTO notas_credito_proveedor
-       (id_proveedor, id_factura_proveedor, tipo_comprobante, punto_venta, nro_comprobante, fecha_emision,
-        moneda, cotizacion, importe_total, saldo_disponible, id_usuario_carga)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10)
-     RETURNING ${COLUMNAS_NC}`,
-    [
-      input.id_proveedor,
-      input.id_factura_proveedor ?? null,
-      input.tipo_comprobante,
-      input.punto_venta,
-      input.nro_comprobante,
-      input.fecha_emision,
-      moneda,
-      cotizacion,
-      input.importe_total,
-      id_usuario_carga,
-    ],
-  );
-  return rows[0];
+  return withTransaction(async (client) => {
+    const { rows } = await client.query<NotaCreditoProveedor>(
+      `INSERT INTO notas_credito_proveedor
+         (id_proveedor, id_factura_proveedor, tipo_comprobante, punto_venta, nro_comprobante, fecha_emision,
+          moneda, cotizacion, importe_total, saldo_disponible, id_usuario_carga)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10)
+       RETURNING ${COLUMNAS_NC}`,
+      [
+        input.id_proveedor,
+        input.id_factura_proveedor ?? null,
+        input.tipo_comprobante,
+        input.punto_venta,
+        input.nro_comprobante,
+        input.fecha_emision,
+        moneda,
+        cotizacion,
+        input.importe_total,
+        id_usuario_carga,
+      ],
+    );
+    const notaCredito = rows[0];
+
+    const [idProveedores, idCompras] = await Promise.all([
+      obtenerIdCuentaPorCodigo(client, CUENTA_PROVEEDORES),
+      obtenerIdCuentaPorCodigo(client, CUENTA_COMPRAS),
+    ]);
+
+    const { rows: asientoRows } = await client.query<{ id_asiento: number }>(
+      `INSERT INTO asientos_contables (concepto, id_nota_credito_proveedor, id_usuario)
+       VALUES ($1, $2, $3) RETURNING id_asiento`,
+      [`Nota de crédito - ${input.tipo_comprobante} ${input.punto_venta}-${input.nro_comprobante}`, notaCredito.id_nota_credito_proveedor, id_usuario_carga],
+    );
+    const idAsiento = asientoRows[0].id_asiento;
+
+    const importeTotalArs = redondearMoneda(input.importe_total * cotizacion);
+    await client.query(
+      `INSERT INTO asientos_detalle (id_asiento, id_cuenta_contable, debe, haber) VALUES ($1, $2, $3, 0)`,
+      [idAsiento, idProveedores, importeTotalArs],
+    );
+    await client.query(
+      `INSERT INTO asientos_detalle (id_asiento, id_cuenta_contable, debe, haber) VALUES ($1, $2, 0, $3)`,
+      [idAsiento, idCompras, importeTotalArs],
+    );
+
+    return notaCredito;
+  });
 }

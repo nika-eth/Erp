@@ -1,6 +1,12 @@
-import { pool } from '../config/db';
+import { pool, withTransaction } from '../config/db';
 import { AppError } from '../utils/AppError';
+import { redondearMoneda } from '../utils/documento.utils';
+import { obtenerIdCuentaPorCodigo } from './planCuentas.service';
 import type { CrearFacturaProveedorInput, EstadoFacturaProveedor, FacturaProveedor, MonedaSoportada } from '../types/domain';
+
+const CUENTA_COMPRAS = '5.2.01';
+const CUENTA_IVA_CREDITO_FISCAL = '1.2.01';
+const CUENTA_PROVEEDORES = '2.1.01';
 
 const MONEDAS_VALIDAS: MonedaSoportada[] = ['ARS', 'USD'];
 const TIPOS_COMPROBANTE_VALIDOS = ['FACTURA_A', 'FACTURA_B', 'FACTURA_C', 'FACTURA_M'];
@@ -44,12 +50,17 @@ export async function buscarFacturasProveedor(id_proveedor?: number, estado?: Es
 }
 
 /**
- * Alta de factura de proveedor. `importe_total` nunca se toma del cliente:
- * se recalcula server-side como `importe_neto + importe_iva` (mismo
- * criterio de no confiar en valores derivados que ya usa
- * `ventas.service.ts` -> `calcularItems`). `saldo_pendiente` arranca en el
- * total y lo va a ir descontando el servicio de imputación de OP (todavía
- * no implementado), no un trigger.
+ * Alta de factura de proveedor + asiento automático de Provisión de Pasivo
+ * (Debe Compras + Debe IVA Crédito Fiscal, Haber Proveedores), todo en una
+ * misma transacción — el devengado contable ocurre al recibir la factura,
+ * no al pagarla (ver `ordenesPago.service.ts` para la Cancelación).
+ * `importe_total` nunca se toma del cliente: se recalcula server-side como
+ * `importe_neto + importe_iva` (mismo criterio de no confiar en valores
+ * derivados que ya usa `ventas.service.ts` -> `calcularItems`).
+ * `saldo_pendiente` arranca en el total y lo va a ir descontando
+ * `ordenesPago.service.ts::emitirOrdenPago`, no un trigger. Los montos del
+ * asiento van convertidos a ARS (`monto * cotizacion`): el Libro Diario es
+ * un único libro en ARS, independiente de la moneda del comprobante.
  */
 export async function crearFacturaProveedor(input: CrearFacturaProveedorInput, id_usuario_carga: number): Promise<FacturaProveedor> {
   if (!Number.isInteger(input.id_proveedor) || input.id_proveedor <= 0) {
@@ -88,28 +99,66 @@ export async function crearFacturaProveedor(input: CrearFacturaProveedorInput, i
   if (typeof importeIva !== 'number' || Number.isNaN(importeIva) || importeIva < 0) {
     throw AppError.badRequest('PAYLOAD_INVALIDO', 'importe_iva debe ser un número mayor o igual a 0.');
   }
-  const importeTotal = Math.round((input.importe_neto + importeIva) * 100) / 100;
+  const importeTotal = redondearMoneda(input.importe_neto + importeIva);
 
-  const { rows } = await pool.query<FacturaProveedor>(
-    `INSERT INTO facturas_proveedor
-       (id_proveedor, tipo_comprobante, punto_venta, nro_comprobante, fecha_emision, fecha_vencimiento,
-        moneda, cotizacion, importe_neto, importe_iva, importe_total, saldo_pendiente, id_usuario_carga)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, $12)
-     RETURNING ${COLUMNAS_FACTURA}`,
-    [
-      input.id_proveedor,
-      input.tipo_comprobante,
-      input.punto_venta,
-      input.nro_comprobante,
-      input.fecha_emision,
-      input.fecha_vencimiento ?? null,
-      moneda,
-      cotizacion,
-      input.importe_neto,
-      importeIva,
-      importeTotal,
-      id_usuario_carga,
-    ],
-  );
-  return rows[0];
+  return withTransaction(async (client) => {
+    const { rows } = await client.query<FacturaProveedor>(
+      `INSERT INTO facturas_proveedor
+         (id_proveedor, tipo_comprobante, punto_venta, nro_comprobante, fecha_emision, fecha_vencimiento,
+          moneda, cotizacion, importe_neto, importe_iva, importe_total, saldo_pendiente, id_usuario_carga)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, $12)
+       RETURNING ${COLUMNAS_FACTURA}`,
+      [
+        input.id_proveedor,
+        input.tipo_comprobante,
+        input.punto_venta,
+        input.nro_comprobante,
+        input.fecha_emision,
+        input.fecha_vencimiento ?? null,
+        moneda,
+        cotizacion,
+        input.importe_neto,
+        importeIva,
+        importeTotal,
+        id_usuario_carga,
+      ],
+    );
+    const factura = rows[0];
+
+    const [idCompras, idIvaCreditoFiscal, idProveedores] = await Promise.all([
+      obtenerIdCuentaPorCodigo(client, CUENTA_COMPRAS),
+      obtenerIdCuentaPorCodigo(client, CUENTA_IVA_CREDITO_FISCAL),
+      obtenerIdCuentaPorCodigo(client, CUENTA_PROVEEDORES),
+    ]);
+
+    const { rows: asientoRows } = await client.query<{ id_asiento: number }>(
+      `INSERT INTO asientos_contables (concepto, id_factura_proveedor, id_usuario)
+       VALUES ($1, $2, $3) RETURNING id_asiento`,
+      [`Provisión de pasivo - Factura ${input.tipo_comprobante} ${input.punto_venta}-${input.nro_comprobante}`, factura.id_factura_proveedor, id_usuario_carga],
+    );
+    const idAsiento = asientoRows[0].id_asiento;
+
+    const importeNetoArs = redondearMoneda(input.importe_neto * cotizacion);
+    const importeIvaArs = redondearMoneda(importeIva * cotizacion);
+    const importeTotalArs = redondearMoneda(importeTotal * cotizacion);
+
+    if (importeNetoArs > 0) {
+      await client.query(
+        `INSERT INTO asientos_detalle (id_asiento, id_cuenta_contable, debe, haber) VALUES ($1, $2, $3, 0)`,
+        [idAsiento, idCompras, importeNetoArs],
+      );
+    }
+    if (importeIvaArs > 0) {
+      await client.query(
+        `INSERT INTO asientos_detalle (id_asiento, id_cuenta_contable, debe, haber) VALUES ($1, $2, $3, 0)`,
+        [idAsiento, idIvaCreditoFiscal, importeIvaArs],
+      );
+    }
+    await client.query(
+      `INSERT INTO asientos_detalle (id_asiento, id_cuenta_contable, debe, haber) VALUES ($1, $2, 0, $3)`,
+      [idAsiento, idProveedores, importeTotalArs],
+    );
+
+    return factura;
+  });
 }
