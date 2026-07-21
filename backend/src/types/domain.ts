@@ -81,6 +81,14 @@ export interface Producto {
   activo: boolean;
 }
 
+/** Edición de producto (Gestión de Productos, F7). `sku` no se puede editar: es la referencia estable usada en ventas históricas. */
+export interface ActualizarProductoInput {
+  descripcion?: string;
+  unidad_venta?: UnidadVentaProducto;
+  peso_teorico_kg?: number;
+  activo?: boolean;
+}
+
 export interface SucursalSecuencia {
   id_sucursal: number;
   tipo_documento: TipoDocumento;
