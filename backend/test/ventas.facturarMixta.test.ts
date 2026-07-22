@@ -86,6 +86,7 @@ function crearHandler(opts: { stock?: { cantidad: string; cantidad_reservada: st
     }
     if (/UPDATE stock_sucursal SET cantidad = cantidad -/.test(sql)) return { rows: [] };
     if (/UPDATE stock_sucursal SET cantidad_reservada = cantidad_reservada \+/.test(sql)) return { rows: [] };
+    if (/INSERT INTO reservas_stock/.test(sql)) return { rows: [] };
     if (/INSERT INTO stock_movements/.test(sql)) return { rows: [] };
     if (/INSERT INTO remitos\s*\(/.test(sql)) {
       const [id_documento_origen, tipo_remito, cliente_id, id_sucursal] = params;

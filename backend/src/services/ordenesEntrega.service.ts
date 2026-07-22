@@ -5,6 +5,7 @@ import { verificarAccesoSucursal } from '../utils/autorizacion.utils';
 import { ETIQUETA_TIPO_DOCUMENTO, redondearMoneda, resolverCantidadUnidades } from '../utils/documento.utils';
 import { tipoDocumentoVentaPorCliente } from '../utils/identificacion.utils';
 import { buscarClientePorId } from './clientes.service';
+import { liberarReserva, registrarReserva } from './reservas.service';
 import { despacharDocumento, type ContextoRemito, type DespachoItem } from './remitos.service';
 import {
   calcularItems,
@@ -253,16 +254,16 @@ export async function procesarVentaMixta(
             `El producto id_producto=${item.id_producto} sólo tiene ${disponible} unidades disponibles para reservar.`,
           );
         }
-        await client.query(
-          `UPDATE stock_sucursal SET cantidad_reservada = cantidad_reservada + $1, actualizado_en = NOW()
-           WHERE id_producto = $2 AND id_sucursal = $3`,
-          [item.cantidad, item.id_producto, contexto.id_sucursal],
-        );
-        await client.query(
-          `INSERT INTO stock_movements (id_producto, id_sucursal, tipo_movimiento, cantidad, comprobante_ref, id_usuario)
-           VALUES ($1, $2, 'RESERVA_CREADA', $3, $4, $5)`,
-          [item.id_producto, contexto.id_sucursal, item.cantidad, `DOCUMENTO:${documento.id_documento}`, contexto.id_usuario],
-        );
+        // Reserva atada al documento (ledger): mantiene el invariante
+        // cantidad_reservada == SUM(reservas_stock) por (producto, sucursal).
+        await registrarReserva(client, {
+          id_documento: documento.id_documento,
+          id_producto: item.id_producto,
+          id_sucursal: contexto.id_sucursal,
+          cantidad: item.cantidad,
+          comprobante_ref: `DOCUMENTO:${documento.id_documento}`,
+          id_usuario: contexto.id_usuario,
+        });
       }
 
       const esEnvio = input.tipo_entrega === 'ENVIO_DOMICILIO';
@@ -360,16 +361,15 @@ export async function cumplirOrdenEntrega(client: PoolClient, params: CumplirOrd
         idSucursal,
       ]);
     }
-    await client.query(
-      `UPDATE stock_sucursal SET cantidad_reservada = cantidad_reservada - $1, actualizado_en = NOW()
-       WHERE id_producto = $2 AND id_sucursal = $3`,
-      [cantidad, detalle.id_producto, idSucursalOrigen],
-    );
-    await client.query(
-      `INSERT INTO stock_movements (id_producto, id_sucursal, tipo_movimiento, cantidad, comprobante_ref, id_usuario)
-       VALUES ($1, $2, 'RESERVA_LIBERADA', $3, $4, $5)`,
-      [detalle.id_producto, idSucursalOrigen, cantidad, `ORDEN_ENTREGA:${orden.nro_orden}`, idUsuario],
-    );
+    await liberarReserva(client, {
+      id_documento: orden.id_documento,
+      id_producto: detalle.id_producto,
+      id_sucursal: idSucursalOrigen,
+      cantidad,
+      comprobante_ref: `ORDEN_ENTREGA:${orden.nro_orden}`,
+      id_usuario: idUsuario,
+      tipo_movimiento: 'RESERVA_LIBERADA',
+    });
   }
 
   const remito = await despacharDocumento(client, {
@@ -475,16 +475,15 @@ export async function anularOrdenEntrega(
     const detalles = await obtenerDetallesOrdenEntrega(client, orden.id_orden_entrega);
     for (const detalle of detalles) {
       const cantidad = Number(detalle.cantidad);
-      await client.query(
-        `UPDATE stock_sucursal SET cantidad_reservada = cantidad_reservada - $1, actualizado_en = NOW()
-         WHERE id_producto = $2 AND id_sucursal = $3`,
-        [cantidad, detalle.id_producto, orden.id_sucursal_origen],
-      );
-      await client.query(
-        `INSERT INTO stock_movements (id_producto, id_sucursal, tipo_movimiento, cantidad, comprobante_ref, id_usuario)
-         VALUES ($1, $2, 'RESERVA_ANULADA', $3, $4, $5)`,
-        [detalle.id_producto, orden.id_sucursal_origen, cantidad, `ORDEN_ENTREGA:${orden.nro_orden}`, contexto.id_usuario],
-      );
+      await liberarReserva(client, {
+        id_documento: orden.id_documento,
+        id_producto: detalle.id_producto,
+        id_sucursal: orden.id_sucursal_origen,
+        cantidad,
+        comprobante_ref: `ORDEN_ENTREGA:${orden.nro_orden}`,
+        id_usuario: contexto.id_usuario,
+        tipo_movimiento: 'RESERVA_ANULADA',
+      });
     }
 
     const { rows: actualizadaRows } = await client.query<OrdenEntrega>(

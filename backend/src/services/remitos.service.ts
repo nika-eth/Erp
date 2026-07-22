@@ -3,6 +3,7 @@ import { pool, withTransaction } from '../config/db';
 import { AppError } from '../utils/AppError';
 import { verificarAccesoSucursal } from '../utils/autorizacion.utils';
 import { resolverCantidadUnidades } from '../utils/documento.utils';
+import { liberarReserva, obtenerReservaPropia, registrarReserva } from './reservas.service';
 import type {
   AnularRemitoInput,
   EstadoRemito,
@@ -77,6 +78,16 @@ export interface DespachoDocumentoInput {
   /** Texto libre para `stock_movements.comprobante_ref` (ej. `DOCUMENTO:50`, `ORDEN_ENTREGA:12`). */
   comprobante_ref: string;
   id_usuario: number;
+  /**
+   * Si el documento tiene una reserva PROPIA en la sucursal de despacho
+   * (ledger `reservas_stock`), consumir de ahí en vez de chocar contra el
+   * límite físico global. Lo activa `generarRemito`: es lo que permite
+   * re-emitir el remito corregido después de una Anulación Correctiva (el
+   * documento se auto-reservó lo suyo al anular, y ahora despacha contra esa
+   * reserva). Default `false` — el retiro inmediato de la venta mixta y el
+   * cumplimiento de órdenes (que libera la reserva por su cuenta) no lo usan.
+   */
+  consumir_reserva_propia?: boolean;
 }
 
 /**
@@ -93,7 +104,7 @@ export interface DespachoDocumentoInput {
  * UPDATE` y validado `verificarAccesoSucursal` antes de invocar esto.
  */
 export async function despacharDocumento(client: PoolClient, input: DespachoDocumentoInput): Promise<Remito> {
-  const itemsValidados: DespachoItem[] = [];
+  const itemsValidados: Array<DespachoItem & { reservaPropia: number }> = [];
 
   for (const item of input.items) {
     const { rows: detalleRows } = await client.query<{ cantidad: string; cantidad_despachada_total: string }>(
@@ -122,12 +133,21 @@ export async function despacharDocumento(client: PoolClient, input: DespachoDocu
       [item.id_producto, input.id_sucursal_despacho],
     );
     const filaStock = stockRows[0];
-    // Contra stock_disponible (físico - reservado), nunca contra el físico
-    // crudo: otra orden pendiente puede tener reservada parte de este mismo
-    // producto/sucursal, y despachar por encima de eso dejaría
-    // `cantidad_reservada > cantidad` (el CHECK de la base lo rechazaría con
-    // un 500 genérico en vez de este 409 explícito).
-    const stockDisponible = filaStock ? Number(filaStock.cantidad) - Number(filaStock.cantidad_reservada) : 0;
+    const fisico = filaStock ? Number(filaStock.cantidad) : 0;
+    const reservadoTotal = filaStock ? Number(filaStock.cantidad_reservada) : 0;
+
+    // Cuánto de lo reservado en (producto, sucursal) es reserva PROPIA de este
+    // documento. Sólo se mira si el llamador pidió consumirla; si no, es 0 y
+    // el disponible se calcula igual que siempre.
+    const reservaPropia = input.consumir_reserva_propia
+      ? Math.min(await obtenerReservaPropia(client, input.id_documento, item.id_producto, input.id_sucursal_despacho), item.cantidad)
+      : 0;
+
+    // Disponible para ESTE documento = físico - reservas AJENAS. La reserva
+    // propia (`reservaPropia`) no se le resta: son unidades que ya tenía
+    // apartadas para sí mismo. Sin este ajuste, re-emitir el remito corregido
+    // tras una Anulación Correctiva chocaría contra su propia reserva.
+    const stockDisponible = fisico - (reservadoTotal - reservaPropia);
     if (item.cantidad > stockDisponible) {
       throw AppError.conflict(
         'STOCK_INSUFICIENTE',
@@ -135,7 +155,7 @@ export async function despacharDocumento(client: PoolClient, input: DespachoDocu
       );
     }
 
-    itemsValidados.push(item);
+    itemsValidados.push({ ...item, reservaPropia });
   }
 
   const tipoRemito = input.es_fiscal ? 'R' : 'X';
@@ -163,6 +183,24 @@ export async function despacharDocumento(client: PoolClient, input: DespachoDocu
       item.id_producto,
       item.cantidad,
     ]);
+
+    // La liberación de la reserva propia va ANTES de bajar el físico: el CHECK
+    // `cantidad_reservada <= cantidad` se evalúa por statement, y si primero
+    // bajáramos el físico (10->5) con la reserva todavía en 6, esa fila
+    // intermedia lo violaría. Bajando la reserva primero (6->1), el físico
+    // puede caer sin romper el invariante en ningún paso.
+    if (item.reservaPropia > 0) {
+      await liberarReserva(client, {
+        id_documento: input.id_documento,
+        id_producto: item.id_producto,
+        id_sucursal: input.id_sucursal_despacho,
+        cantidad: item.reservaPropia,
+        comprobante_ref: input.comprobante_ref,
+        id_usuario: input.id_usuario,
+        tipo_movimiento: 'RESERVA_LIBERADA',
+      });
+    }
+
     await client.query(
       `UPDATE stock_sucursal SET cantidad = cantidad - $1, actualizado_en = NOW()
        WHERE id_producto = $2 AND id_sucursal = $3`,
@@ -266,15 +304,29 @@ export async function generarRemito(input: GenerarRemitoInput, contexto: Context
       tipo_movimiento_stock: 'DESPACHO_LOCAL',
       comprobante_ref: `DOCUMENTO:${documento.id_documento}`,
       id_usuario: contexto.id_usuario,
+      // Si el documento se auto-reservó lo suyo (p.ej. tras una Anulación
+      // Correctiva), consumir de esa reserva en vez de chocar contra el físico.
+      consumir_reserva_propia: true,
     });
   });
 }
 
 /**
- * Anula un remito "emitido no entregado", devolviendo el stock salvo que sea
- * una regularización (`es_regularizacion_stock`, ver
- * `facturarComprobanteInterno`), y liberando el saldo pendiente del
- * documento origen para poder re-emitir (caso "5 -> 4 -> 3+2").
+ * Anula un remito "emitido no entregado" (Anulación Correctiva). Los remitos
+ * son inmutables: no se editan, se anulan. Al anular:
+ *  - Inmutabilidad: el remito pasa a `ANULADO`, nunca se borra.
+ *  - Reversión física: se devuelve el stock a la sucursal, salvo que sea una
+ *    regularización (`es_regularizacion_stock`, ver `facturarComprobanteInterno`,
+ *    que nunca descontó físico).
+ *  - Restitución del saldo pendiente del documento origen (baja
+ *    `cantidad_despachada_total`) para poder re-emitir el remito corregido.
+ *  - Restitución virtual: se vuelve a reservar esa misma cantidad ATADA al
+ *    documento (ledger `reservas_stock`), para que las unidades devueltas
+ *    queden apartadas para él y no se las lleve otra venta mientras se corrige.
+ *    Al re-emitir, `generarRemito` (con `consumir_reserva_propia`) despacha
+ *    contra esa reserva propia sin chocar contra el límite físico global. Es
+ *    lo que resuelve el "facturé/remití 6, en el portón entraron 5" y el
+ *    clásico encadenado "5 -> 4 -> 3+2".
  */
 export async function anularRemito(
   id_remito: number,
@@ -318,6 +370,17 @@ export async function anularRemito(
            VALUES ($1, $2, 'ANULACION_REMITO', $3, $4, $5)`,
           [detalle.id_producto, remito.id_sucursal, detalle.cantidad_despachada, `REMITO:${id_remito}`, contexto.id_usuario],
         );
+        // Restitución virtual: re-reservar lo devuelto, atado al documento.
+        // Es siempre válido contra el CHECK (reservada <= físico): acabamos de
+        // sumar esa misma cantidad al físico, así que no puede excederlo.
+        await registrarReserva(client, {
+          id_documento: remito.id_documento_origen,
+          id_producto: detalle.id_producto,
+          id_sucursal: remito.id_sucursal,
+          cantidad: Number(detalle.cantidad_despachada),
+          comprobante_ref: `REMITO:${id_remito}`,
+          id_usuario: contexto.id_usuario,
+        });
       }
       await client.query(
         `UPDATE documentos_detalles SET cantidad_despachada_total = cantidad_despachada_total - $1
