@@ -86,6 +86,7 @@ function crearHandler(opts: { stock?: { cantidad: string; cantidad_reservada: st
     }
     if (/UPDATE stock_sucursal SET cantidad = cantidad -/.test(sql)) return { rows: [] };
     if (/UPDATE stock_sucursal SET cantidad_reservada = cantidad_reservada \+/.test(sql)) return { rows: [] };
+    if (/INSERT INTO reservas_stock/.test(sql)) return { rows: [] };
     if (/INSERT INTO stock_movements/.test(sql)) return { rows: [] };
     if (/INSERT INTO remitos\s*\(/.test(sql)) {
       const [id_documento_origen, tipo_remito, cliente_id, id_sucursal] = params;
@@ -116,7 +117,7 @@ function crearHandler(opts: { stock?: { cantidad: string; cantidad_reservada: st
       return { rows: [{ id_remito_detalle: 1, id_producto: PRODUCTO.id_producto, sku: PRODUCTO.sku, descripcion: PRODUCTO.descripcion, cantidad_despachada: '5.000' }] };
     }
     if (/INSERT INTO ordenes_entrega\s*\(/.test(sql)) {
-      const [id_documento, id_sucursal_origen, cliente_id, id_usuario_creo] = params;
+      const [id_documento, id_sucursal_origen, cliente_id, id_usuario_creo, tipo_entrega, direccion_envio, fecha_pactada_envio] = params;
       return {
         rows: [
           {
@@ -126,6 +127,9 @@ function crearHandler(opts: { stock?: { cantidad: string; cantidad_reservada: st
             id_sucursal_origen,
             cliente_id,
             estado: 'PENDIENTE',
+            tipo_entrega,
+            direccion_envio,
+            fecha_pactada_envio,
             fecha_creacion: new Date().toISOString(),
             id_usuario_creo,
             id_sucursal_retiro: null,
@@ -178,12 +182,14 @@ describe('POST /api/ventas/facturar-mixta', () => {
         cliente_id: 1,
         items: [{ id_producto: 1, cantidad: 5, precio_unitario: 1000 }],
         pagos: [{ id_cuenta: 1, monto: 5000 }],
+        tipo_entrega: 'RETIRO_CLIENTE',
       });
 
     expect(res.status).toBe(201);
     expect(res.body.remito_inmediato).toBeNull();
     expect(res.body.orden_entrega).not.toBeNull();
     expect(res.body.orden_entrega.estado).toBe('PENDIENTE');
+    expect(res.body.orden_entrega.tipo_entrega).toBe('RETIRO_CLIENTE');
     expect(res.body.orden_entrega.detalles).toHaveLength(1);
     expect(queryLog.some((q) => /RESERVA_CREADA/.test(q.sql))).toBe(true);
   });
@@ -198,11 +204,49 @@ describe('POST /api/ventas/facturar-mixta', () => {
         cliente_id: 1,
         items: [{ id_producto: 1, cantidad: 10, precio_unitario: 1000, cantidad_retiro_inmediato: 4 }],
         pagos: [{ id_cuenta: 1, monto: 10000 }],
+        tipo_entrega: 'ENVIO_DOMICILIO',
+        direccion_envio: 'Av. Siempre Viva 742',
+        fecha_pactada_envio: '2026-08-05',
       });
 
     expect(res.status).toBe(201);
     expect(res.body.remito_inmediato).not.toBeNull();
     expect(res.body.orden_entrega).not.toBeNull();
+    expect(res.body.orden_entrega.tipo_entrega).toBe('ENVIO_DOMICILIO');
+    expect(res.body.orden_entrega.direccion_envio).toBe('Av. Siempre Viva 742');
+  });
+
+  it('rechaza con 400 si queda algo pendiente y no se manda tipo_entrega', async () => {
+    const token = crearToken();
+
+    const res = await request(app)
+      .post('/api/ventas/facturar-mixta')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        cliente_id: 1,
+        items: [{ id_producto: 1, cantidad: 5, precio_unitario: 1000 }],
+        pagos: [{ id_cuenta: 1, monto: 5000 }],
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('PAYLOAD_INVALIDO');
+  });
+
+  it('rechaza con 400 si tipo_entrega es ENVIO_DOMICILIO sin dirección', async () => {
+    const token = crearToken();
+
+    const res = await request(app)
+      .post('/api/ventas/facturar-mixta')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        cliente_id: 1,
+        items: [{ id_producto: 1, cantidad: 5, precio_unitario: 1000 }],
+        pagos: [{ id_cuenta: 1, monto: 5000 }],
+        tipo_entrega: 'ENVIO_DOMICILIO',
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('PAYLOAD_INVALIDO');
   });
 
   it('rechaza con 409 si no hay stock suficiente para reservar la porción pendiente', async () => {
@@ -216,6 +260,7 @@ describe('POST /api/ventas/facturar-mixta', () => {
         cliente_id: 1,
         items: [{ id_producto: 1, cantidad: 5, precio_unitario: 1000 }],
         pagos: [{ id_cuenta: 1, monto: 5000 }],
+        tipo_entrega: 'RETIRO_CLIENTE',
       });
 
     expect(res.status).toBe(409);

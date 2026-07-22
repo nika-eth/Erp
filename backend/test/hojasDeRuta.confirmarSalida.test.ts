@@ -66,6 +66,7 @@ function crearHandler(opts: { hoja?: typeof HOJA | null; relaciones?: typeof REL
       return { rows: [{ cantidad: '100.000', cantidad_reservada: '0.000' }] };
     }
     if (/UPDATE stock_sucursal SET cantidad_reservada = cantidad_reservada -/.test(sql)) return { rows: [] };
+    if (/UPDATE reservas_stock SET cantidad = cantidad -/.test(sql)) return { rows: [] };
     if (/UPDATE stock_sucursal SET cantidad = cantidad -/.test(sql)) return { rows: [] };
     if (/INSERT INTO stock_movements/.test(sql)) return { rows: [] };
     if (/SELECT cantidad, cantidad_despachada_total FROM documentos_detalles/.test(sql)) {

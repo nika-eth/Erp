@@ -5,6 +5,7 @@ import { verificarAccesoSucursal } from '../utils/autorizacion.utils';
 import { ETIQUETA_TIPO_DOCUMENTO, redondearMoneda, resolverCantidadUnidades } from '../utils/documento.utils';
 import { tipoDocumentoVentaPorCliente } from '../utils/identificacion.utils';
 import { buscarClientePorId } from './clientes.service';
+import { liberarReserva, registrarReserva } from './reservas.service';
 import { despacharDocumento, type ContextoRemito, type DespachoItem } from './remitos.service';
 import {
   calcularItems,
@@ -27,8 +28,11 @@ import type {
 type Queryable = Pool | PoolClient;
 
 export const ORDEN_ENTREGA_COLUMNAS = `id_orden_entrega, nro_orden, id_documento, id_sucursal_origen, cliente_id, estado,
+  tipo_entrega, direccion_envio, fecha_pactada_envio,
   fecha_creacion, id_usuario_creo, id_sucursal_retiro, id_usuario_retiro, fecha_retiro, id_remito_retiro,
   motivo_anulacion, id_usuario_anulo, fecha_anulacion`;
+
+const FECHA_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Lockea una orden por ID (no por `nro_orden`) — la usa `hojasDeRuta.service.ts`, que ya tiene el ID guardado en `hoja_de_ruta_ordenes`. */
 export async function bloquearOrdenEntregaPorId(client: PoolClient, id_orden_entrega: number): Promise<OrdenEntrega | null> {
@@ -97,6 +101,27 @@ function validarPayloadVentaMixta(input: ProcesarVentaMixtaInput): void {
   for (const pago of input.pagos) {
     if (!Number.isInteger(pago.id_cuenta) || pago.monto <= 0) {
       throw AppError.badRequest('PAYLOAD_INVALIDO', 'Cada pago requiere id_cuenta válido y monto positivo.');
+    }
+  }
+
+  // La existencia (o no) de un remanente pendiente ya se determina con los
+  // valores crudos del payload — la resolución KG->unidades es proporcional,
+  // nunca cambia si un ítem queda con saldo pendiente o no.
+  const quedaAlgoPendiente = input.items.some((item) => (item.cantidad_retiro_inmediato ?? 0) < item.cantidad);
+  if (quedaAlgoPendiente) {
+    if (input.tipo_entrega !== 'RETIRO_CLIENTE' && input.tipo_entrega !== 'ENVIO_DOMICILIO') {
+      throw AppError.badRequest(
+        'PAYLOAD_INVALIDO',
+        'tipo_entrega es requerido (RETIRO_CLIENTE o ENVIO_DOMICILIO) cuando algún ítem queda con cantidad pendiente.',
+      );
+    }
+    if (input.tipo_entrega === 'ENVIO_DOMICILIO') {
+      if (!input.direccion_envio?.trim()) {
+        throw AppError.badRequest('PAYLOAD_INVALIDO', 'direccion_envio es requerida para un envío a domicilio.');
+      }
+      if (!FECHA_REGEX.test(input.fecha_pactada_envio ?? '')) {
+        throw AppError.badRequest('PAYLOAD_INVALIDO', 'fecha_pactada_envio es requerida con formato YYYY-MM-DD.');
+      }
     }
   }
 }
@@ -229,23 +254,32 @@ export async function procesarVentaMixta(
             `El producto id_producto=${item.id_producto} sólo tiene ${disponible} unidades disponibles para reservar.`,
           );
         }
-        await client.query(
-          `UPDATE stock_sucursal SET cantidad_reservada = cantidad_reservada + $1, actualizado_en = NOW()
-           WHERE id_producto = $2 AND id_sucursal = $3`,
-          [item.cantidad, item.id_producto, contexto.id_sucursal],
-        );
-        await client.query(
-          `INSERT INTO stock_movements (id_producto, id_sucursal, tipo_movimiento, cantidad, comprobante_ref, id_usuario)
-           VALUES ($1, $2, 'RESERVA_CREADA', $3, $4, $5)`,
-          [item.id_producto, contexto.id_sucursal, item.cantidad, `DOCUMENTO:${documento.id_documento}`, contexto.id_usuario],
-        );
+        // Reserva atada al documento (ledger): mantiene el invariante
+        // cantidad_reservada == SUM(reservas_stock) por (producto, sucursal).
+        await registrarReserva(client, {
+          id_documento: documento.id_documento,
+          id_producto: item.id_producto,
+          id_sucursal: contexto.id_sucursal,
+          cantidad: item.cantidad,
+          comprobante_ref: `DOCUMENTO:${documento.id_documento}`,
+          id_usuario: contexto.id_usuario,
+        });
       }
 
+      const esEnvio = input.tipo_entrega === 'ENVIO_DOMICILIO';
       const { rows: ordenRows } = await client.query<OrdenEntrega>(
-        `INSERT INTO ordenes_entrega (id_documento, id_sucursal_origen, cliente_id, id_usuario_creo)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO ordenes_entrega (id_documento, id_sucursal_origen, cliente_id, id_usuario_creo, tipo_entrega, direccion_envio, fecha_pactada_envio)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING ${ORDEN_ENTREGA_COLUMNAS}`,
-        [documento.id_documento, contexto.id_sucursal, input.cliente_id, contexto.id_usuario],
+        [
+          documento.id_documento,
+          contexto.id_sucursal,
+          input.cliente_id,
+          contexto.id_usuario,
+          input.tipo_entrega,
+          esEnvio ? input.direccion_envio!.trim() : null,
+          esEnvio ? input.fecha_pactada_envio : null,
+        ],
       );
       const orden = ordenRows[0];
 
@@ -327,16 +361,15 @@ export async function cumplirOrdenEntrega(client: PoolClient, params: CumplirOrd
         idSucursal,
       ]);
     }
-    await client.query(
-      `UPDATE stock_sucursal SET cantidad_reservada = cantidad_reservada - $1, actualizado_en = NOW()
-       WHERE id_producto = $2 AND id_sucursal = $3`,
-      [cantidad, detalle.id_producto, idSucursalOrigen],
-    );
-    await client.query(
-      `INSERT INTO stock_movements (id_producto, id_sucursal, tipo_movimiento, cantidad, comprobante_ref, id_usuario)
-       VALUES ($1, $2, 'RESERVA_LIBERADA', $3, $4, $5)`,
-      [detalle.id_producto, idSucursalOrigen, cantidad, `ORDEN_ENTREGA:${orden.nro_orden}`, idUsuario],
-    );
+    await liberarReserva(client, {
+      id_documento: orden.id_documento,
+      id_producto: detalle.id_producto,
+      id_sucursal: idSucursalOrigen,
+      cantidad,
+      comprobante_ref: `ORDEN_ENTREGA:${orden.nro_orden}`,
+      id_usuario: idUsuario,
+      tipo_movimiento: 'RESERVA_LIBERADA',
+    });
   }
 
   const remito = await despacharDocumento(client, {
@@ -442,16 +475,15 @@ export async function anularOrdenEntrega(
     const detalles = await obtenerDetallesOrdenEntrega(client, orden.id_orden_entrega);
     for (const detalle of detalles) {
       const cantidad = Number(detalle.cantidad);
-      await client.query(
-        `UPDATE stock_sucursal SET cantidad_reservada = cantidad_reservada - $1, actualizado_en = NOW()
-         WHERE id_producto = $2 AND id_sucursal = $3`,
-        [cantidad, detalle.id_producto, orden.id_sucursal_origen],
-      );
-      await client.query(
-        `INSERT INTO stock_movements (id_producto, id_sucursal, tipo_movimiento, cantidad, comprobante_ref, id_usuario)
-         VALUES ($1, $2, 'RESERVA_ANULADA', $3, $4, $5)`,
-        [detalle.id_producto, orden.id_sucursal_origen, cantidad, `ORDEN_ENTREGA:${orden.nro_orden}`, contexto.id_usuario],
-      );
+      await liberarReserva(client, {
+        id_documento: orden.id_documento,
+        id_producto: detalle.id_producto,
+        id_sucursal: orden.id_sucursal_origen,
+        cantidad,
+        comprobante_ref: `ORDEN_ENTREGA:${orden.nro_orden}`,
+        id_usuario: contexto.id_usuario,
+        tipo_movimiento: 'RESERVA_ANULADA',
+      });
     }
 
     const { rows: actualizadaRows } = await client.query<OrdenEntrega>(

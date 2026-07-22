@@ -2,7 +2,7 @@ import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app';
 import { crearToken } from './helpers/auth';
-import { resetQueryLog, setQueryHandler, type MockQueryResult } from './setup/pgMock';
+import { queryLog, resetQueryLog, setQueryHandler, type MockQueryResult } from './setup/pgMock';
 
 const app = createApp();
 
@@ -40,14 +40,21 @@ function crearHandler(opts: {
   documento?: typeof DOCUMENTO_FISCAL | null;
   detalle?: { cantidad: string; cantidad_despachada_total: string; peso_teorico_kg?: string; sku?: string } | null;
   stock?: { cantidad: string; cantidad_reservada?: string } | null;
+  reservaPropia?: string | null;
 }) {
   const {
     documento = DOCUMENTO_FISCAL,
     detalle = { cantidad: '10.000', cantidad_despachada_total: '0.000', peso_teorico_kg: '2.400', sku: 'AB1500' },
     stock = { cantidad: '50.000', cantidad_reservada: '0.000' },
+    reservaPropia = null,
   } = opts;
 
   return (sql: string): MockQueryResult => {
+    if (/FROM reservas_stock\s+WHERE id_documento = \$1/.test(sql)) {
+      return { rows: reservaPropia ? [{ cantidad: reservaPropia }] : [] };
+    }
+    if (/UPDATE stock_sucursal SET cantidad_reservada = cantidad_reservada -/.test(sql)) return { rows: [] };
+    if (/UPDATE reservas_stock SET cantidad = cantidad -/.test(sql)) return { rows: [] };
     if (/FROM documentos WHERE id_documento = \$1 FOR UPDATE/.test(sql)) {
       return { rows: documento ? [documento] : [] };
     }
@@ -178,6 +185,24 @@ describe('POST /api/remitos/generar', () => {
 
     expect(res.status).toBe(409);
     expect(res.body.error).toBe('STOCK_INSUFICIENTE');
+  });
+
+  it('despacha consumiendo la reserva PROPIA del documento aunque el disponible global no alcance', async () => {
+    // Físico 10, reservada 6 — pero esas 6 son reserva propia de este mismo
+    // documento (p.ej. quedó tras anular su remito). El disponible global sería
+    // 4 y un despacho de 5 chocaría; como es reserva propia, debe consumirla y
+    // despachar sin error (es el corazón de la Anulación Correctiva).
+    setQueryHandler(crearHandler({ stock: { cantidad: '10.000', cantidad_reservada: '6.000' }, reservaPropia: '6.000' }));
+    const token = crearToken();
+
+    const res = await request(app)
+      .post('/api/remitos/generar')
+      .set('Authorization', `Bearer ${token}`)
+      .send(PAYLOAD_VALIDO);
+
+    expect(res.status).toBe(201);
+    // Consumió parte de la reserva propia (libera 5 de las 6 reservadas).
+    expect(queryLog.some((q) => /UPDATE reservas_stock SET cantidad = cantidad -/.test(q.sql))).toBe(true);
   });
 
   it('rechaza con 400 si el producto no pertenece al documento', async () => {

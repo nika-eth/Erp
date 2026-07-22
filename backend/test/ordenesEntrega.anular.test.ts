@@ -41,6 +41,7 @@ function crearHandler(opts: { orden?: ReturnType<typeof ordenPendiente> | null }
       return { rows: [DETALLE] };
     }
     if (/UPDATE stock_sucursal SET cantidad_reservada = cantidad_reservada -/.test(sql)) return { rows: [] };
+    if (/UPDATE reservas_stock SET cantidad = cantidad -/.test(sql)) return { rows: [] };
     if (/INSERT INTO stock_movements/.test(sql)) return { rows: [] };
     if (/UPDATE ordenes_entrega SET estado = 'ANULADA'/.test(sql)) {
       return { rows: [{ ...orden, estado: 'ANULADA', motivo_anulacion: 'no retirado', id_usuario_anulo: 1, fecha_anulacion: new Date().toISOString() }] };

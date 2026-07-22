@@ -701,6 +701,14 @@ export interface StockMovement {
 
 export type EstadoOrdenEntrega = 'PENDIENTE' | 'RETIRADA' | 'ANULADA';
 
+/**
+ * Intención de cumplimiento de la orden, cargada al vender — no cambia
+ * ninguna mecánica de stock, las dos siguen siendo la misma reserva,
+ * cumplible por cualquiera de los dos caminos (mostrador o Pizarra de
+ * Camiones). Sólo evita que logística tenga que preguntarle al cliente.
+ */
+export type TipoEntregaOrden = 'RETIRO_CLIENTE' | 'ENVIO_DOMICILIO';
+
 export interface OrdenEntregaDetalle {
   id_orden_entrega_detalle: number;
   id_orden_entrega: number;
@@ -717,6 +725,9 @@ export interface OrdenEntrega {
   id_sucursal_origen: number;
   cliente_id: number;
   estado: EstadoOrdenEntrega;
+  tipo_entrega: TipoEntregaOrden;
+  direccion_envio: string | null;
+  fecha_pactada_envio: string | null;
   fecha_creacion: string;
   id_usuario_creo: number;
   id_sucursal_retiro: number | null;
@@ -743,6 +754,11 @@ export interface ProcesarVentaMixtaInput {
   items: ItemVentaMixtaInput[];
   pagos: PagoInput[];
   es_fiscal?: boolean;
+  /** Requerido sólo si algún ítem queda con cantidad pendiente (cantidad > cantidad_retiro_inmediato). Aplica a toda la orden, no por renglón. */
+  tipo_entrega?: TipoEntregaOrden;
+  /** Requeridos sólo si `tipo_entrega === 'ENVIO_DOMICILIO'`. */
+  direccion_envio?: string;
+  fecha_pactada_envio?: string; // 'YYYY-MM-DD'
 }
 
 export interface ProcesarVentaMixtaResult {
@@ -820,4 +836,6 @@ export interface OrdenEntregaBacklog {
   zona: string | null;
   casillerosRequeridos: number | null;
   kilosTotales: number;
+  direccion_envio: string | null;
+  fecha_pactada_envio: string | null;
 }
