@@ -5,6 +5,8 @@ import type {
   FacturarVentaInput,
   FacturarVentaResult,
   ItemInput,
+  ProcesarVentaMixtaInput,
+  ProcesarVentaMixtaResult,
 } from '../types/domain';
 
 /**
@@ -14,6 +16,22 @@ import type {
  */
 export function facturarVenta(input: FacturarVentaInput, pinSupervisor?: string): Promise<FacturarVentaResult> {
   return apiFetch('/ventas/facturar', {
+    method: 'POST',
+    body: input,
+    headers: pinSupervisor ? { 'x-supervisor-pin': pinSupervisor } : undefined,
+  });
+}
+
+/**
+ * Venta mixta: renglones divididos entre retiro inmediato (despacha ya
+ * mismo) y saldo pendiente (reserva stock y genera una Orden de Entrega
+ * Pendiente). Ver `RendicionPago.tsx` (editor de split, F7).
+ */
+export function procesarVentaMixta(
+  input: ProcesarVentaMixtaInput,
+  pinSupervisor?: string,
+): Promise<ProcesarVentaMixtaResult> {
+  return apiFetch('/ventas/facturar-mixta', {
     method: 'POST',
     body: input,
     headers: pinSupervisor ? { 'x-supervisor-pin': pinSupervisor } : undefined,
