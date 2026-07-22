@@ -754,3 +754,70 @@ export interface ProcesarVentaMixtaResult {
 export interface AnularOrdenEntregaInput {
   motivo: string;
 }
+
+// -----------------------------------------------------------------------
+// Pizarra de Camiones / Hojas de Ruta (ver `sql/015_hojas_de_ruta.sql` y
+// `hojasDeRuta.service.ts`) — Flujo C, incremento 2 de Gestión de Stock
+// Multi-Sucursal.
+//
+// Agrupa varias Órdenes de Entrega Pendientes en un mismo viaje de camión.
+// Se arma en BORRADOR (agregar/quitar órdenes, validar capacidad) sin tocar
+// stock; recién al confirmar la salida (EN_TRANSITO) se despacha en lote.
+// No reemplaza a `envios`/`camiones` (logistica.service.ts): ese circuito
+// sigue existiendo para documentos sin Orden de Entrega asociada.
+// -----------------------------------------------------------------------
+
+export type EstadoHojaDeRuta = 'BORRADOR' | 'EN_TRANSITO' | 'ANULADA';
+
+export interface HojaDeRuta {
+  id_hoja_de_ruta: number;
+  id_camion: number;
+  chofer: string | null;
+  fecha_despacho: string;
+  estado: EstadoHojaDeRuta;
+  id_usuario_creo: number;
+  fecha_creacion: string;
+  id_usuario_confirmo: number | null;
+  fecha_confirmacion: string | null;
+  motivo_anulacion: string | null;
+  id_usuario_anulo: number | null;
+  fecha_anulacion: string | null;
+  ordenes: HojaDeRutaOrden[];
+}
+
+/** Una Orden de Entrega ya agregada a una Hoja de Ruta, con el snapshot de ocupación calculado al agregarla. */
+export interface HojaDeRutaOrden {
+  id_hoja_de_ruta_orden: number;
+  id_hoja_de_ruta: number;
+  id_orden_entrega: number;
+  nro_orden: string | null;
+  cliente: string;
+  id_sucursal_despacho: number;
+  casillerosOcupados: number;
+  kilosAsignados: number;
+}
+
+export interface CrearHojaDeRutaInput {
+  id_camion: number;
+  chofer?: string | null;
+  fecha_despacho: string; // 'YYYY-MM-DD'
+}
+
+export interface AgregarOrdenAHojaInput {
+  nro_orden: string;
+  id_sucursal_despacho: number;
+}
+
+export interface AnularHojaDeRutaInput {
+  motivo: string;
+}
+
+/** Una Orden de Entrega Pendiente todavía sin viaje asignado, tal como se muestra en el backlog de la Pizarra de Camiones. */
+export interface OrdenEntregaBacklog {
+  id_orden_entrega: number;
+  nro_orden: string | null;
+  cliente: string;
+  zona: string | null;
+  casillerosRequeridos: number | null;
+  kilosTotales: number;
+}

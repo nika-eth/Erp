@@ -26,15 +26,24 @@ import type {
 
 type Queryable = Pool | PoolClient;
 
-const ORDEN_ENTREGA_COLUMNAS = `id_orden_entrega, nro_orden, id_documento, id_sucursal_origen, cliente_id, estado,
+export const ORDEN_ENTREGA_COLUMNAS = `id_orden_entrega, nro_orden, id_documento, id_sucursal_origen, cliente_id, estado,
   fecha_creacion, id_usuario_creo, id_sucursal_retiro, id_usuario_retiro, fecha_retiro, id_remito_retiro,
   motivo_anulacion, id_usuario_anulo, fecha_anulacion`;
+
+/** Lockea una orden por ID (no por `nro_orden`) — la usa `hojasDeRuta.service.ts`, que ya tiene el ID guardado en `hoja_de_ruta_ordenes`. */
+export async function bloquearOrdenEntregaPorId(client: PoolClient, id_orden_entrega: number): Promise<OrdenEntrega | null> {
+  const { rows } = await client.query<OrdenEntrega>(
+    `SELECT ${ORDEN_ENTREGA_COLUMNAS} FROM ordenes_entrega WHERE id_orden_entrega = $1 FOR UPDATE`,
+    [id_orden_entrega],
+  );
+  return rows[0] ?? null;
+}
 
 const DOCUMENTO_COLUMNAS_VENTA = `id_documento, id_sucursal_origen, nro_remito, fecha, cliente_id, total_neto, tipo_documento,
   id_zona, es_fiscal, tipo_comprobante, punto_venta, nro_comprobante_afip, cae, cae_vencimiento, estado_afip,
   error_afip_mensaje, id_documento_origen_ci, estado_facturacion_interna, estado_despacho`;
 
-async function obtenerDetallesOrdenEntrega(client: Queryable, id_orden_entrega: number): Promise<OrdenEntregaDetalle[]> {
+export async function obtenerDetallesOrdenEntrega(client: Queryable, id_orden_entrega: number): Promise<OrdenEntregaDetalle[]> {
   const { rows } = await client.query<OrdenEntregaDetalle>(
     `SELECT oed.id_orden_entrega_detalle, oed.id_orden_entrega, oed.id_producto, p.sku, p.descripcion, oed.cantidad
      FROM ordenes_entrega_detalles oed
@@ -277,16 +286,91 @@ export async function buscarOrdenEntregaPorNro(nro_orden: string): Promise<Orden
   return orden;
 }
 
+export interface CumplirOrdenEntregaParams {
+  orden: OrdenEntrega;
+  documento: { id_documento: number; cliente_id: number; es_fiscal: boolean };
+  detalles: OrdenEntregaDetalle[];
+  idSucursalDespacho: number;
+  idUsuario: number;
+  idCamion?: number | null;
+  idChofer?: string | null;
+}
+
 /**
- * Retiro de una Orden de Entrega Pendiente: todo-o-nada por renglón (no hay
- * retiro parcial). Puede ejecutarse desde CUALQUIER sucursal, no
- * necesariamente la de origen — por eso no valida `verificarAccesoSucursal`
- * contra `id_sucursal_origen`: la sucursal relevante para esta acción es la
- * del propio operador que retira (`contexto.id_sucursal`, del JWT), no la de
- * origen. Libera la reserva en la sucursal de origen y despacha físicamente
- * desde la sucursal que retira, en ese orden, lockeando ambas filas de
+ * Núcleo compartido de "cumplir una Orden de Entrega Pendiente": libera la
+ * reserva en la sucursal de origen y despacha físicamente desde
+ * `idSucursalDespacho` (que puede ser otra), lockeando ambas filas de
  * `stock_sucursal` de menor a mayor `id_sucursal` para evitar deadlocks
- * entre dos retiros cruzados concurrentes en sentido opuesto.
+ * entre dos cumplimientos cruzados concurrentes en sentido opuesto.
+ *
+ * Reutilizado por `retirarOrdenEntrega` (retiro en mostrador,
+ * `idSucursalDespacho = contexto.id_sucursal` del operador) y por
+ * `hojasDeRuta.service.ts::confirmarSalidaHojaDeRuta` (entrega por
+ * logística, `idSucursalDespacho` elegido al armar el viaje, con
+ * `idCamion`/`idChofer` de la Hoja de Ruta). El llamador es responsable de
+ * haber lockeado `orden`/`documento` `FOR UPDATE` y validado que
+ * `orden.estado === 'PENDIENTE'` antes de invocar esto.
+ */
+export async function cumplirOrdenEntrega(client: PoolClient, params: CumplirOrdenEntregaParams): Promise<OrdenEntrega> {
+  const { orden, documento, detalles, idSucursalDespacho, idUsuario, idCamion, idChofer } = params;
+  const idSucursalOrigen = orden.id_sucursal_origen;
+
+  for (const detalle of detalles) {
+    const cantidad = Number(detalle.cantidad);
+    const sucursalesALockear =
+      idSucursalOrigen === idSucursalDespacho
+        ? [idSucursalOrigen]
+        : [Math.min(idSucursalOrigen, idSucursalDespacho), Math.max(idSucursalOrigen, idSucursalDespacho)];
+    for (const idSucursal of sucursalesALockear) {
+      await client.query(`SELECT cantidad FROM stock_sucursal WHERE id_producto = $1 AND id_sucursal = $2 FOR UPDATE`, [
+        detalle.id_producto,
+        idSucursal,
+      ]);
+    }
+    await client.query(
+      `UPDATE stock_sucursal SET cantidad_reservada = cantidad_reservada - $1, actualizado_en = NOW()
+       WHERE id_producto = $2 AND id_sucursal = $3`,
+      [cantidad, detalle.id_producto, idSucursalOrigen],
+    );
+    await client.query(
+      `INSERT INTO stock_movements (id_producto, id_sucursal, tipo_movimiento, cantidad, comprobante_ref, id_usuario)
+       VALUES ($1, $2, 'RESERVA_LIBERADA', $3, $4, $5)`,
+      [detalle.id_producto, idSucursalOrigen, cantidad, `ORDEN_ENTREGA:${orden.nro_orden}`, idUsuario],
+    );
+  }
+
+  const remito = await despacharDocumento(client, {
+    id_documento: orden.id_documento,
+    cliente_id: documento.cliente_id,
+    es_fiscal: documento.es_fiscal,
+    id_sucursal_despacho: idSucursalDespacho,
+    items: detalles.map((d) => ({ id_producto: d.id_producto, cantidad: Number(d.cantidad) })),
+    id_camion: idCamion,
+    id_chofer: idChofer,
+    estado_inicial: 'ENTREGADO',
+    tipo_movimiento_stock: idSucursalOrigen === idSucursalDespacho ? 'DESPACHO_LOCAL' : 'DESPACHO_CRUZADO',
+    comprobante_ref: `ORDEN_ENTREGA:${orden.nro_orden}`,
+    id_usuario: idUsuario,
+  });
+
+  const { rows: actualizadaRows } = await client.query<OrdenEntrega>(
+    `UPDATE ordenes_entrega SET estado = 'RETIRADA', id_sucursal_retiro = $1, id_usuario_retiro = $2, fecha_retiro = NOW(), id_remito_retiro = $3
+     WHERE id_orden_entrega = $4
+     RETURNING ${ORDEN_ENTREGA_COLUMNAS}`,
+    [idSucursalDespacho, idUsuario, remito.id_remito, orden.id_orden_entrega],
+  );
+  const actualizada = actualizadaRows[0];
+  actualizada.detalles = detalles;
+  return actualizada;
+}
+
+/**
+ * Retiro de una Orden de Entrega Pendiente en mostrador: todo-o-nada por
+ * renglón (no hay retiro parcial). Puede ejecutarse desde CUALQUIER
+ * sucursal, no necesariamente la de origen — por eso no valida
+ * `verificarAccesoSucursal` contra `id_sucursal_origen`: la sucursal
+ * relevante para esta acción es la del propio operador que retira
+ * (`contexto.id_sucursal`, del JWT), no la de origen.
  */
 export async function retirarOrdenEntrega(nro_orden: string, contexto: ContextoFacturacion): Promise<OrdenEntrega> {
   return withTransaction(async (client) => {
@@ -310,56 +394,15 @@ export async function retirarOrdenEntrega(nro_orden: string, contexto: ContextoF
       [orden.id_documento],
     );
     const documento = documentoRows[0];
-
     const detalles = await obtenerDetallesOrdenEntrega(client, orden.id_orden_entrega);
-    const idSucursalOrigen = orden.id_sucursal_origen;
-    const idSucursalRetiro = contexto.id_sucursal;
 
-    for (const detalle of detalles) {
-      const cantidad = Number(detalle.cantidad);
-      const sucursalesALockear =
-        idSucursalOrigen === idSucursalRetiro
-          ? [idSucursalOrigen]
-          : [Math.min(idSucursalOrigen, idSucursalRetiro), Math.max(idSucursalOrigen, idSucursalRetiro)];
-      for (const idSucursal of sucursalesALockear) {
-        await client.query(`SELECT cantidad FROM stock_sucursal WHERE id_producto = $1 AND id_sucursal = $2 FOR UPDATE`, [
-          detalle.id_producto,
-          idSucursal,
-        ]);
-      }
-      await client.query(
-        `UPDATE stock_sucursal SET cantidad_reservada = cantidad_reservada - $1, actualizado_en = NOW()
-         WHERE id_producto = $2 AND id_sucursal = $3`,
-        [cantidad, detalle.id_producto, idSucursalOrigen],
-      );
-      await client.query(
-        `INSERT INTO stock_movements (id_producto, id_sucursal, tipo_movimiento, cantidad, comprobante_ref, id_usuario)
-         VALUES ($1, $2, 'RESERVA_LIBERADA', $3, $4, $5)`,
-        [detalle.id_producto, idSucursalOrigen, cantidad, `ORDEN_ENTREGA:${orden.nro_orden}`, contexto.id_usuario],
-      );
-    }
-
-    const remito = await despacharDocumento(client, {
-      id_documento: orden.id_documento,
-      cliente_id: documento.cliente_id,
-      es_fiscal: documento.es_fiscal,
-      id_sucursal_despacho: idSucursalRetiro,
-      items: detalles.map((d) => ({ id_producto: d.id_producto, cantidad: Number(d.cantidad) })),
-      estado_inicial: 'ENTREGADO',
-      tipo_movimiento_stock: idSucursalOrigen === idSucursalRetiro ? 'DESPACHO_LOCAL' : 'DESPACHO_CRUZADO',
-      comprobante_ref: `ORDEN_ENTREGA:${orden.nro_orden}`,
-      id_usuario: contexto.id_usuario,
+    return cumplirOrdenEntrega(client, {
+      orden,
+      documento,
+      detalles,
+      idSucursalDespacho: contexto.id_sucursal,
+      idUsuario: contexto.id_usuario,
     });
-
-    const { rows: actualizadaRows } = await client.query<OrdenEntrega>(
-      `UPDATE ordenes_entrega SET estado = 'RETIRADA', id_sucursal_retiro = $1, id_usuario_retiro = $2, fecha_retiro = NOW(), id_remito_retiro = $3
-       WHERE id_orden_entrega = $4
-       RETURNING ${ORDEN_ENTREGA_COLUMNAS}`,
-      [idSucursalRetiro, contexto.id_usuario, remito.id_remito, orden.id_orden_entrega],
-    );
-    const actualizada = actualizadaRows[0];
-    actualizada.detalles = detalles;
-    return actualizada;
   });
 }
 
