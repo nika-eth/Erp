@@ -3,7 +3,15 @@ import { pool, withTransaction } from '../config/db';
 import { AppError } from '../utils/AppError';
 import { verificarAccesoSucursal } from '../utils/autorizacion.utils';
 import { resolverCantidadUnidades } from '../utils/documento.utils';
-import type { AnularRemitoInput, GenerarRemitoInput, Remito, RemitoDetalle, Rol } from '../types/domain';
+import type {
+  AnularRemitoInput,
+  EstadoRemito,
+  GenerarRemitoInput,
+  Remito,
+  RemitoDetalle,
+  Rol,
+  TipoMovimientoStock,
+} from '../types/domain';
 
 /** `pool.query` y `client.query` (dentro de una transacción) comparten esta forma. */
 type Queryable = Pool | PoolClient;
@@ -46,6 +54,130 @@ async function obtenerDetallesRemito(client: Queryable, id_remito: number): Prom
     [id_remito],
   );
   return rows;
+}
+
+export interface DespachoItem {
+  id_producto: number;
+  /** Ya resuelta en unidades (no kilos) — quien llama resuelve KG->unidades antes. */
+  cantidad: number;
+}
+
+export interface DespachoDocumentoInput {
+  id_documento: number;
+  cliente_id: number;
+  es_fiscal: boolean;
+  /** Sucursal cuyo `stock_sucursal` se descuenta — no necesariamente `documento.id_sucursal_origen` (ver retiro cruzado en `ordenesEntrega.service.ts`). */
+  id_sucursal_despacho: number;
+  items: DespachoItem[];
+  id_camion?: number | null;
+  id_chofer?: string | null;
+  /** Default `'EMITIDO'`. Un retiro mostrador ya consumado se inserta directo en `'ENTREGADO'`. */
+  estado_inicial?: EstadoRemito;
+  tipo_movimiento_stock: TipoMovimientoStock;
+  /** Texto libre para `stock_movements.comprobante_ref` (ej. `DOCUMENTO:50`, `ORDEN_ENTREGA:12`). */
+  comprobante_ref: string;
+  id_usuario: number;
+}
+
+/**
+ * Núcleo compartido de "descontar stock físico + emitir remito": valida
+ * saldo pendiente por ítem contra `documentos_detalles`, valida stock físico
+ * en `id_sucursal_despacho`, inserta `remitos`/`remitos_detalles`, descuenta
+ * `stock_sucursal.cantidad`, suma `cantidad_despachada_total`, audita cada
+ * ítem en `stock_movements` y recalcula `documentos.estado_despacho`.
+ *
+ * Reutilizado por `generarRemito` (despacho normal, misma sucursal de
+ * origen) y por `ordenesEntrega.service.ts` (retiro inmediato de una venta
+ * mixta y cierre de un retiro cruzado, ambos potencialmente desde OTRA
+ * sucursal). El llamador es responsable de haber lockeado `documentos FOR
+ * UPDATE` y validado `verificarAccesoSucursal` antes de invocar esto.
+ */
+export async function despacharDocumento(client: PoolClient, input: DespachoDocumentoInput): Promise<Remito> {
+  const itemsValidados: DespachoItem[] = [];
+
+  for (const item of input.items) {
+    const { rows: detalleRows } = await client.query<{ cantidad: string; cantidad_despachada_total: string }>(
+      `SELECT cantidad, cantidad_despachada_total FROM documentos_detalles
+       WHERE id_documento = $1 AND id_producto = $2 FOR UPDATE`,
+      [input.id_documento, item.id_producto],
+    );
+    const detalle = detalleRows[0];
+    if (!detalle) {
+      throw AppError.badRequest(
+        'PRODUCTO_NO_PERTENECE_AL_DOCUMENTO',
+        `El producto id_producto=${item.id_producto} no pertenece al documento id_documento=${input.id_documento}.`,
+      );
+    }
+
+    const saldo = Number(detalle.cantidad) - Number(detalle.cantidad_despachada_total);
+    if (item.cantidad > saldo) {
+      throw AppError.conflict(
+        'SALDO_EXCEDIDO',
+        `El ítem id_producto=${item.id_producto} sólo tiene ${saldo} unidades pendientes de despacho.`,
+      );
+    }
+
+    const { rows: stockRows } = await client.query<{ cantidad: string }>(
+      `SELECT cantidad FROM stock_sucursal WHERE id_producto = $1 AND id_sucursal = $2 FOR UPDATE`,
+      [item.id_producto, input.id_sucursal_despacho],
+    );
+    const stockDisponible = Number(stockRows[0]?.cantidad ?? 0);
+    if (item.cantidad > stockDisponible) {
+      throw AppError.conflict(
+        'STOCK_INSUFICIENTE',
+        `El producto id_producto=${item.id_producto} sólo tiene ${stockDisponible} unidades en stock.`,
+      );
+    }
+
+    itemsValidados.push(item);
+  }
+
+  const tipoRemito = input.es_fiscal ? 'R' : 'X';
+  const { rows: remitoRows } = await client.query<Remito>(
+    `INSERT INTO remitos (id_documento_origen, tipo_remito, cliente_id, id_sucursal, id_camion, id_chofer, estado)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING id_remito, nro_remito, id_documento_origen, tipo_remito, id_remito_origen_x, es_regularizacion_stock,
+               estado, cliente_id, id_sucursal, id_camion, id_chofer, fecha_emision, motivo_anulacion,
+               id_usuario_anulo, fecha_anulacion`,
+    [
+      input.id_documento,
+      tipoRemito,
+      input.cliente_id,
+      input.id_sucursal_despacho,
+      input.id_camion ?? null,
+      input.id_chofer ?? null,
+      input.estado_inicial ?? 'EMITIDO',
+    ],
+  );
+  const remito = remitoRows[0];
+
+  for (const item of itemsValidados) {
+    await client.query(`INSERT INTO remitos_detalles (id_remito, id_producto, cantidad_despachada) VALUES ($1, $2, $3)`, [
+      remito.id_remito,
+      item.id_producto,
+      item.cantidad,
+    ]);
+    await client.query(
+      `UPDATE stock_sucursal SET cantidad = cantidad - $1, actualizado_en = NOW()
+       WHERE id_producto = $2 AND id_sucursal = $3`,
+      [item.cantidad, item.id_producto, input.id_sucursal_despacho],
+    );
+    await client.query(
+      `UPDATE documentos_detalles SET cantidad_despachada_total = cantidad_despachada_total + $1
+       WHERE id_documento = $2 AND id_producto = $3`,
+      [item.cantidad, input.id_documento, item.id_producto],
+    );
+    await client.query(
+      `INSERT INTO stock_movements (id_producto, id_sucursal, tipo_movimiento, cantidad, comprobante_ref, id_usuario)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [item.id_producto, input.id_sucursal_despacho, input.tipo_movimiento_stock, item.cantidad, input.comprobante_ref, input.id_usuario],
+    );
+  }
+
+  await recalcularEstadoDespacho(client, input.id_documento);
+
+  remito.detalles = await obtenerDetallesRemito(client, remito.id_remito);
+  return remito;
 }
 
 /**
@@ -92,17 +224,13 @@ export async function generarRemito(input: GenerarRemitoInput, contexto: Context
       );
     }
 
-    const itemsResueltos: Array<{ id_producto: number; cantidad: number }> = [];
-
+    // Resuelve KG->unidades contra el peso_teorico_kg de cada línea; la
+    // validación de saldo/stock y la mutación quedan a cargo de
+    // `despacharDocumento`.
+    const itemsResueltos: DespachoItem[] = [];
     for (const item of input.items) {
-      const { rows: detalleRows } = await client.query<{
-        cantidad: string;
-        cantidad_despachada_total: string;
-        peso_teorico_kg: string;
-        sku: string;
-      }>(
-        `SELECT cantidad, cantidad_despachada_total, peso_teorico_kg, sku FROM documentos_detalles
-         WHERE id_documento = $1 AND id_producto = $2 FOR UPDATE`,
+      const { rows: detalleRows } = await client.query<{ peso_teorico_kg: string; sku: string }>(
+        `SELECT peso_teorico_kg, sku FROM documentos_detalles WHERE id_documento = $1 AND id_producto = $2`,
         [input.id_documento, item.id_producto],
       );
       const detalle = detalleRows[0];
@@ -112,76 +240,27 @@ export async function generarRemito(input: GenerarRemitoInput, contexto: Context
           `El producto id_producto=${item.id_producto} no pertenece al documento id_documento=${input.id_documento}.`,
         );
       }
-
       const cantidad = resolverCantidadUnidades(
         item.cantidad,
         item.unidad_ingreso ?? 'U',
         Number(detalle.peso_teorico_kg),
         detalle.sku,
       );
-
-      const saldo = Number(detalle.cantidad) - Number(detalle.cantidad_despachada_total);
-      if (cantidad > saldo) {
-        throw AppError.conflict(
-          'SALDO_EXCEDIDO',
-          `El ítem id_producto=${item.id_producto} sólo tiene ${saldo} unidades pendientes de despacho.`,
-        );
-      }
-
-      const { rows: stockRows } = await client.query<{ cantidad: string }>(
-        `SELECT cantidad FROM stock_sucursal WHERE id_producto = $1 AND id_sucursal = $2 FOR UPDATE`,
-        [item.id_producto, documento.id_sucursal_origen],
-      );
-      const stockDisponible = Number(stockRows[0]?.cantidad ?? 0);
-      if (cantidad > stockDisponible) {
-        throw AppError.conflict(
-          'STOCK_INSUFICIENTE',
-          `El producto id_producto=${item.id_producto} sólo tiene ${stockDisponible} unidades en stock.`,
-        );
-      }
-
       itemsResueltos.push({ id_producto: item.id_producto, cantidad });
     }
 
-    const tipoRemito = documento.es_fiscal ? 'R' : 'X';
-    const { rows: remitoRows } = await client.query<Remito>(
-      `INSERT INTO remitos (id_documento_origen, tipo_remito, cliente_id, id_sucursal, id_camion, id_chofer)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id_remito, nro_remito, id_documento_origen, tipo_remito, id_remito_origen_x, es_regularizacion_stock,
-                 estado, cliente_id, id_sucursal, id_camion, id_chofer, fecha_emision, motivo_anulacion,
-                 id_usuario_anulo, fecha_anulacion`,
-      [
-        documento.id_documento,
-        tipoRemito,
-        documento.cliente_id,
-        documento.id_sucursal_origen,
-        input.id_camion ?? null,
-        input.id_chofer ?? null,
-      ],
-    );
-    const remito = remitoRows[0];
-
-    for (const item of itemsResueltos) {
-      await client.query(
-        `INSERT INTO remitos_detalles (id_remito, id_producto, cantidad_despachada) VALUES ($1, $2, $3)`,
-        [remito.id_remito, item.id_producto, item.cantidad],
-      );
-      await client.query(
-        `UPDATE stock_sucursal SET cantidad = cantidad - $1, actualizado_en = NOW()
-         WHERE id_producto = $2 AND id_sucursal = $3`,
-        [item.cantidad, item.id_producto, documento.id_sucursal_origen],
-      );
-      await client.query(
-        `UPDATE documentos_detalles SET cantidad_despachada_total = cantidad_despachada_total + $1
-         WHERE id_documento = $2 AND id_producto = $3`,
-        [item.cantidad, input.id_documento, item.id_producto],
-      );
-    }
-
-    await recalcularEstadoDespacho(client, input.id_documento);
-
-    remito.detalles = await obtenerDetallesRemito(client, remito.id_remito);
-    return remito;
+    return despacharDocumento(client, {
+      id_documento: documento.id_documento,
+      cliente_id: documento.cliente_id,
+      es_fiscal: documento.es_fiscal,
+      id_sucursal_despacho: documento.id_sucursal_origen,
+      items: itemsResueltos,
+      id_camion: input.id_camion,
+      id_chofer: input.id_chofer,
+      tipo_movimiento_stock: 'DESPACHO_LOCAL',
+      comprobante_ref: `DOCUMENTO:${documento.id_documento}`,
+      id_usuario: contexto.id_usuario,
+    });
   });
 }
 
@@ -227,6 +306,11 @@ export async function anularRemito(
           `UPDATE stock_sucursal SET cantidad = cantidad + $1, actualizado_en = NOW()
            WHERE id_producto = $2 AND id_sucursal = $3`,
           [detalle.cantidad_despachada, detalle.id_producto, remito.id_sucursal],
+        );
+        await client.query(
+          `INSERT INTO stock_movements (id_producto, id_sucursal, tipo_movimiento, cantidad, comprobante_ref, id_usuario)
+           VALUES ($1, $2, 'ANULACION_REMITO', $3, $4, $5)`,
+          [detalle.id_producto, remito.id_sucursal, detalle.cantidad_despachada, `REMITO:${id_remito}`, contexto.id_usuario],
         );
       }
       await client.query(

@@ -51,7 +51,10 @@ function crearHandler(opts: {
     if (/FROM documentos WHERE id_documento = \$1 FOR UPDATE/.test(sql)) {
       return { rows: documento ? [documento] : [] };
     }
-    if (/FROM documentos_detalles\s+WHERE id_documento = \$1 AND id_producto = \$2 FOR UPDATE/.test(sql)) {
+    if (/SELECT peso_teorico_kg, sku FROM documentos_detalles/.test(sql)) {
+      return { rows: detalle ? [detalle] : [] };
+    }
+    if (/SELECT cantidad, cantidad_despachada_total FROM documentos_detalles/.test(sql)) {
       return { rows: detalle ? [detalle] : [] };
     }
     if (/FROM stock_sucursal WHERE id_producto = \$1 AND id_sucursal = \$2 FOR UPDATE/.test(sql)) {
@@ -62,6 +65,7 @@ function crearHandler(opts: {
     }
     if (/INSERT INTO remitos_detalles/.test(sql)) return { rows: [] };
     if (/UPDATE stock_sucursal SET cantidad = cantidad - /.test(sql)) return { rows: [] };
+    if (/INSERT INTO stock_movements/.test(sql)) return { rows: [] };
     if (/UPDATE documentos_detalles SET cantidad_despachada_total = cantidad_despachada_total \+/.test(sql)) {
       return { rows: [] };
     }

@@ -63,7 +63,7 @@ function validarPayload(input: FacturarVentaInput): void {
  * confía en lo que mande el cliente (ver `ItemInput`). `activo = FALSE` se
  * rechaza: un producto dado de baja no se puede seguir vendiendo.
  */
-async function obtenerProductos(ids: number[], client?: PoolClient): Promise<Map<number, Producto>> {
+export async function obtenerProductos(ids: number[], client?: PoolClient): Promise<Map<number, Producto>> {
   const runner = client ?? pool;
   const { rows } = await runner.query<Producto>(
     `SELECT id_producto, sku, descripcion, unidad_venta, peso_teorico_kg, activo FROM productos WHERE id_producto = ANY($1::int[])`,
@@ -88,7 +88,7 @@ async function obtenerProductos(ids: number[], client?: PoolClient): Promise<Map
  * `kilos` se calcula siempre igual en ambos modos: alimenta la capacidad de
  * camión en logística, sea o no el producto el que fija el precio de venta.
  */
-function calcularItems(input: ItemInput[], productos: Map<number, Producto>): { items: ItemDocumento[]; totalNeto: number } {
+export function calcularItems(input: ItemInput[], productos: Map<number, Producto>): { items: ItemDocumento[]; totalNeto: number } {
   const items: ItemDocumento[] = input.map((i) => {
     const producto = productos.get(i.id_producto)!;
     const pesoTeorico = Number(producto.peso_teorico_kg);
@@ -116,7 +116,7 @@ function calcularItems(input: ItemInput[], productos: Map<number, Producto>): { 
 }
 
 /** Una fila por ítem en `documentos_detalles` (ver `sql/009_documentos_detalles.sql`). */
-async function insertarDetalles(client: PoolClient, id_documento: number, items: ItemDocumento[]): Promise<void> {
+export async function insertarDetalles(client: PoolClient, id_documento: number, items: ItemDocumento[]): Promise<void> {
   for (const item of items) {
     await client.query(
       `INSERT INTO documentos_detalles (id_documento, id_producto, sku, descripcion, unidad_venta, cantidad, peso_teorico_kg, precio_unitario, subtotal)
@@ -136,7 +136,7 @@ async function insertarDetalles(client: PoolClient, id_documento: number, items:
   }
 }
 
-async function obtenerCuentasEmpresa(ids: number[], client: PoolClient): Promise<Map<number, CuentaEmpresa>> {
+export async function obtenerCuentasEmpresa(ids: number[], client: PoolClient): Promise<Map<number, CuentaEmpresa>> {
   const { rows } = await client.query<CuentaEmpresa>(
     `SELECT id_cuenta, nombre_cuenta FROM cuentas_empresa WHERE id_cuenta = ANY($1::int[])`,
     [ids],
