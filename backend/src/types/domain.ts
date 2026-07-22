@@ -667,3 +667,90 @@ export interface EmitirOrdenPagoResult {
 export interface AnularOrdenPagoInput {
   motivo: string;
 }
+
+// -----------------------------------------------------------------------
+// Reservas de stock y Órdenes de Entrega Pendiente (ver
+// `sql/014_ordenes_entrega_stock.sql` y `ordenesEntrega.service.ts`).
+//
+// Venta mixta: un mismo renglón de una Factura puede dividirse en una
+// porción de retiro inmediato (despacha en el momento, sin reserva) y una
+// porción pendiente (reserva stock en la sucursal de origen y genera una
+// Orden de Entrega, retirable después desde cualquier sucursal). El retiro
+// de una orden es todo-o-nada por renglón: no hay retiro parcial.
+// -----------------------------------------------------------------------
+
+export type TipoMovimientoStock =
+  | 'VENTA_DIRECTA'
+  | 'RESERVA_CREADA'
+  | 'RESERVA_LIBERADA'
+  | 'RESERVA_ANULADA'
+  | 'DESPACHO_LOCAL'
+  | 'DESPACHO_CRUZADO'
+  | 'ANULACION_REMITO';
+
+export interface StockMovement {
+  id_movimiento: number;
+  id_producto: number;
+  id_sucursal: number;
+  tipo_movimiento: TipoMovimientoStock;
+  cantidad: string;
+  comprobante_ref: string;
+  id_usuario: number;
+  creado_en: string;
+}
+
+export type EstadoOrdenEntrega = 'PENDIENTE' | 'RETIRADA' | 'ANULADA';
+
+export interface OrdenEntregaDetalle {
+  id_orden_entrega_detalle: number;
+  id_orden_entrega: number;
+  id_producto: number;
+  sku: string;
+  descripcion: string;
+  cantidad: number;
+}
+
+export interface OrdenEntrega {
+  id_orden_entrega: number;
+  nro_orden: string | null;
+  id_documento: number;
+  id_sucursal_origen: number;
+  cliente_id: number;
+  estado: EstadoOrdenEntrega;
+  fecha_creacion: string;
+  id_usuario_creo: number;
+  id_sucursal_retiro: number | null;
+  id_usuario_retiro: number | null;
+  fecha_retiro: string | null;
+  id_remito_retiro: number | null;
+  motivo_anulacion: string | null;
+  id_usuario_anulo: number | null;
+  fecha_anulacion: string | null;
+  detalles: OrdenEntregaDetalle[];
+}
+
+/** Ítem de venta mixta: `cantidad` es el total vendido de esa línea; `cantidad_retiro_inmediato` (default 0) es cuánto se despacha ya mismo — el resto (`cantidad - cantidad_retiro_inmediato`) queda reservado en una Orden de Entrega Pendiente. */
+export interface ItemVentaMixtaInput {
+  id_producto: number;
+  cantidad: number;
+  unidad_ingreso?: UnidadIngresoCantidad;
+  precio_unitario: number;
+  cantidad_retiro_inmediato?: number;
+}
+
+export interface ProcesarVentaMixtaInput {
+  cliente_id: number;
+  items: ItemVentaMixtaInput[];
+  pagos: PagoInput[];
+  es_fiscal?: boolean;
+}
+
+export interface ProcesarVentaMixtaResult {
+  documento: Documento;
+  remito_inmediato: Remito | null;
+  orden_entrega: OrdenEntrega | null;
+}
+
+export interface AnularOrdenEntregaInput {
+  motivo: string;
+}

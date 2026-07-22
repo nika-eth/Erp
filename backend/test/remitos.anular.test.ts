@@ -35,6 +35,7 @@ function crearHandler(opts: { remito?: typeof REMITO_EMITIDO | null }) {
     }
     if (/FROM remitos_detalles rd/.test(sql)) return { rows: DETALLES };
     if (/UPDATE stock_sucursal SET cantidad = cantidad \+/.test(sql)) return { rows: [] };
+    if (/INSERT INTO stock_movements/.test(sql)) return { rows: [] };
     if (/UPDATE documentos_detalles SET cantidad_despachada_total = cantidad_despachada_total -/.test(sql)) {
       return { rows: [] };
     }

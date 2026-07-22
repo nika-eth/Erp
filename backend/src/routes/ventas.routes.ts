@@ -6,6 +6,7 @@ import { verifySupervisorOverride } from '../middleware/supervisorOverride';
 import {
   postFacturarComprobanteInterno,
   postFacturarVenta,
+  postFacturarVentaMixta,
   postGuardarPresupuesto,
 } from '../controllers/ventas.controller';
 
@@ -20,4 +21,5 @@ ventasRouter.post(
   asyncHandler(postFacturarVenta),
 );
 ventasRouter.post('/presupuesto', asyncHandler(postGuardarPresupuesto));
+ventasRouter.post('/facturar-mixta', asyncHandler(postFacturarVentaMixta));
 ventasRouter.post('/:id/facturar-interno', asyncHandler(postFacturarComprobanteInterno));

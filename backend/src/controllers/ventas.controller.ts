@@ -1,7 +1,8 @@
 import type { Request, Response } from 'express';
 import { AppError } from '../utils/AppError';
+import { procesarVentaMixta } from '../services/ordenesEntrega.service';
 import { facturarComprobanteInterno, facturarVenta, guardarPresupuesto } from '../services/ventas.service';
-import type { FacturarVentaInput } from '../types/domain';
+import type { FacturarVentaInput, ProcesarVentaMixtaInput } from '../types/domain';
 
 /**
  * POST /api/ventas/facturar
@@ -69,6 +70,24 @@ export async function postFacturarComprobanteInterno(req: Request, res: Response
     rol: req.user.rol,
     id_sucursal: req.user.id_sucursal,
   });
+
+  res.status(201).json(resultado);
+}
+
+/**
+ * POST /api/ventas/facturar-mixta
+ *
+ * Venta con renglones divididos entre retiro inmediato (despacha ya mismo)
+ * y cantidad pendiente (reserva stock y genera una Orden de Entrega,
+ * retirable después desde cualquier sucursal — ver `ordenesEntrega.routes.ts`).
+ */
+export async function postFacturarVentaMixta(req: Request, res: Response): Promise<void> {
+  if (!req.user) {
+    throw AppError.unauthorized();
+  }
+
+  const input = req.body as ProcesarVentaMixtaInput;
+  const resultado = await procesarVentaMixta({ id_sucursal: req.user.id_sucursal, id_usuario: req.user.id_usuario }, input);
 
   res.status(201).json(resultado);
 }
