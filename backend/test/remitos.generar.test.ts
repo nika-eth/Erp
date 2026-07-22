@@ -39,12 +39,12 @@ function remitoInsertado(documento: typeof DOCUMENTO_FISCAL) {
 function crearHandler(opts: {
   documento?: typeof DOCUMENTO_FISCAL | null;
   detalle?: { cantidad: string; cantidad_despachada_total: string; peso_teorico_kg?: string; sku?: string } | null;
-  stock?: { cantidad: string } | null;
+  stock?: { cantidad: string; cantidad_reservada?: string } | null;
 }) {
   const {
     documento = DOCUMENTO_FISCAL,
     detalle = { cantidad: '10.000', cantidad_despachada_total: '0.000', peso_teorico_kg: '2.400', sku: 'AB1500' },
-    stock = { cantidad: '50.000' },
+    stock = { cantidad: '50.000', cantidad_reservada: '0.000' },
   } = opts;
 
   return (sql: string): MockQueryResult => {
@@ -152,7 +152,23 @@ describe('POST /api/remitos/generar', () => {
   });
 
   it('rechaza con 409 cuando no hay stock suficiente', async () => {
-    setQueryHandler(crearHandler({ stock: { cantidad: '1.000' } }));
+    setQueryHandler(crearHandler({ stock: { cantidad: '1.000', cantidad_reservada: '0.000' } }));
+    const token = crearToken();
+
+    const res = await request(app)
+      .post('/api/remitos/generar')
+      .set('Authorization', `Bearer ${token}`)
+      .send(PAYLOAD_VALIDO);
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('STOCK_INSUFICIENTE');
+  });
+
+  it('rechaza con 409 cuando el físico alcanza pero está reservado por otra orden pendiente', async () => {
+    // Físico 10, pero 6 ya reservados por otra Orden de Entrega: sólo hay 4
+    // disponibles, y el remito pide 5 — debe fallar contra el disponible,
+    // no contra el físico crudo (que alcanzaría).
+    setQueryHandler(crearHandler({ stock: { cantidad: '10.000', cantidad_reservada: '6.000' } }));
     const token = crearToken();
 
     const res = await request(app)

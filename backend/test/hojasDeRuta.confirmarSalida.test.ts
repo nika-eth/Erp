@@ -62,8 +62,8 @@ function crearHandler(opts: { hoja?: typeof HOJA | null; relaciones?: typeof REL
       const idOrden = params[0] as number;
       return { rows: DETALLES[idOrden] ?? [] };
     }
-    if (/SELECT cantidad FROM stock_sucursal WHERE id_producto = \$1 AND id_sucursal = \$2 FOR UPDATE/.test(sql)) {
-      return { rows: [{ cantidad: '100.000' }] };
+    if (/FROM stock_sucursal WHERE id_producto = \$1 AND id_sucursal = \$2 FOR UPDATE/.test(sql)) {
+      return { rows: [{ cantidad: '100.000', cantidad_reservada: '0.000' }] };
     }
     if (/UPDATE stock_sucursal SET cantidad_reservada = cantidad_reservada -/.test(sql)) return { rows: [] };
     if (/UPDATE stock_sucursal SET cantidad = cantidad -/.test(sql)) return { rows: [] };

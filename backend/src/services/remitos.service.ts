@@ -117,15 +117,21 @@ export async function despacharDocumento(client: PoolClient, input: DespachoDocu
       );
     }
 
-    const { rows: stockRows } = await client.query<{ cantidad: string }>(
-      `SELECT cantidad FROM stock_sucursal WHERE id_producto = $1 AND id_sucursal = $2 FOR UPDATE`,
+    const { rows: stockRows } = await client.query<{ cantidad: string; cantidad_reservada: string }>(
+      `SELECT cantidad, cantidad_reservada FROM stock_sucursal WHERE id_producto = $1 AND id_sucursal = $2 FOR UPDATE`,
       [item.id_producto, input.id_sucursal_despacho],
     );
-    const stockDisponible = Number(stockRows[0]?.cantidad ?? 0);
+    const filaStock = stockRows[0];
+    // Contra stock_disponible (físico - reservado), nunca contra el físico
+    // crudo: otra orden pendiente puede tener reservada parte de este mismo
+    // producto/sucursal, y despachar por encima de eso dejaría
+    // `cantidad_reservada > cantidad` (el CHECK de la base lo rechazaría con
+    // un 500 genérico en vez de este 409 explícito).
+    const stockDisponible = filaStock ? Number(filaStock.cantidad) - Number(filaStock.cantidad_reservada) : 0;
     if (item.cantidad > stockDisponible) {
       throw AppError.conflict(
         'STOCK_INSUFICIENTE',
-        `El producto id_producto=${item.id_producto} sólo tiene ${stockDisponible} unidades en stock.`,
+        `El producto id_producto=${item.id_producto} sólo tiene ${stockDisponible} unidades disponibles en stock.`,
       );
     }
 

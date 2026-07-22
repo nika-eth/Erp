@@ -46,8 +46,8 @@ function crearHandler(opts: { orden?: ReturnType<typeof ordenPendiente> | null }
     if (/SELECT cantidad, cantidad_despachada_total FROM documentos_detalles/.test(sql)) {
       return { rows: [{ cantidad: '10.000', cantidad_despachada_total: '0.000' }] };
     }
-    if (/SELECT cantidad FROM stock_sucursal WHERE/.test(sql)) {
-      return { rows: [{ cantidad: '50.000' }] };
+    if (/FROM stock_sucursal WHERE id_producto = \$1 AND id_sucursal = \$2 FOR UPDATE/.test(sql)) {
+      return { rows: [{ cantidad: '50.000', cantidad_reservada: '0.000' }] };
     }
     if (/UPDATE stock_sucursal SET cantidad_reservada = cantidad_reservada -/.test(sql)) return { rows: [] };
     if (/UPDATE stock_sucursal SET cantidad = cantidad -/.test(sql)) return { rows: [] };
