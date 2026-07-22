@@ -96,7 +96,12 @@ export async function obtenerHojaDeRuta(id_hoja_de_ruta: number): Promise<HojaDe
   return conOrdenes(pool, hoja);
 }
 
-/** Backlog de la Pizarra de Camiones: Órdenes de Entrega Pendientes que todavía no están en ninguna Hoja de Ruta activa. */
+/**
+ * Backlog de la Pizarra de Camiones: Órdenes de Entrega Pendientes con
+ * `tipo_entrega = 'ENVIO_DOMICILIO'` que todavía no están en ninguna Hoja
+ * de Ruta activa. Las de `RETIRO_CLIENTE` no aparecen acá — esas se
+ * retiran en mostrador (`ordenesEntrega.routes.ts`), no por camión.
+ */
 export async function listarBacklogOrdenesPendientes(contexto: ContextoAcceso): Promise<OrdenEntregaBacklog[]> {
   const condicionSucursal = contexto.rol === 'VENDEDOR' ? 'AND oe.id_sucursal_origen = $1' : '';
   const valores = contexto.rol === 'VENDEDOR' ? [contexto.id_sucursal] : [];
@@ -108,8 +113,11 @@ export async function listarBacklogOrdenesPendientes(contexto: ContextoAcceso): 
     zona: string | null;
     casilleros_requeridos: number | null;
     kilos_totales: string;
+    direccion_envio: string | null;
+    fecha_pactada_envio: string | null;
   }>(
     `SELECT oe.id_orden_entrega, oe.nro_orden, cl.nombre AS cliente, z.nombre AS zona, z.casilleros_requeridos,
+            oe.direccion_envio, oe.fecha_pactada_envio,
             COALESCE((SELECT SUM(oed.cantidad * p.peso_teorico_kg) FROM ordenes_entrega_detalles oed
                       JOIN productos p ON p.id_producto = oed.id_producto
                       WHERE oed.id_orden_entrega = oe.id_orden_entrega), 0) AS kilos_totales
@@ -118,13 +126,14 @@ export async function listarBacklogOrdenesPendientes(contexto: ContextoAcceso): 
      JOIN documentos d ON d.id_documento = oe.id_documento
      LEFT JOIN zonas z ON z.id_zona = d.id_zona
      WHERE oe.estado = 'PENDIENTE'
+       AND oe.tipo_entrega = 'ENVIO_DOMICILIO'
        AND NOT EXISTS (
          SELECT 1 FROM hoja_de_ruta_ordenes hro
          JOIN hojas_de_ruta hr ON hr.id_hoja_de_ruta = hro.id_hoja_de_ruta
          WHERE hro.id_orden_entrega = oe.id_orden_entrega AND hr.estado != 'ANULADA'
        )
        ${condicionSucursal}
-     ORDER BY oe.fecha_creacion DESC
+     ORDER BY oe.fecha_pactada_envio NULLS LAST, oe.fecha_creacion DESC
      LIMIT 100`,
     valores,
   );
@@ -136,6 +145,8 @@ export async function listarBacklogOrdenesPendientes(contexto: ContextoAcceso): 
     zona: r.zona,
     casillerosRequeridos: r.casilleros_requeridos,
     kilosTotales: redondearMoneda(Number(r.kilos_totales)),
+    direccion_envio: r.direccion_envio,
+    fecha_pactada_envio: r.fecha_pactada_envio,
   }));
 }
 

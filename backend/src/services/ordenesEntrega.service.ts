@@ -27,8 +27,11 @@ import type {
 type Queryable = Pool | PoolClient;
 
 export const ORDEN_ENTREGA_COLUMNAS = `id_orden_entrega, nro_orden, id_documento, id_sucursal_origen, cliente_id, estado,
+  tipo_entrega, direccion_envio, fecha_pactada_envio,
   fecha_creacion, id_usuario_creo, id_sucursal_retiro, id_usuario_retiro, fecha_retiro, id_remito_retiro,
   motivo_anulacion, id_usuario_anulo, fecha_anulacion`;
+
+const FECHA_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Lockea una orden por ID (no por `nro_orden`) — la usa `hojasDeRuta.service.ts`, que ya tiene el ID guardado en `hoja_de_ruta_ordenes`. */
 export async function bloquearOrdenEntregaPorId(client: PoolClient, id_orden_entrega: number): Promise<OrdenEntrega | null> {
@@ -97,6 +100,27 @@ function validarPayloadVentaMixta(input: ProcesarVentaMixtaInput): void {
   for (const pago of input.pagos) {
     if (!Number.isInteger(pago.id_cuenta) || pago.monto <= 0) {
       throw AppError.badRequest('PAYLOAD_INVALIDO', 'Cada pago requiere id_cuenta válido y monto positivo.');
+    }
+  }
+
+  // La existencia (o no) de un remanente pendiente ya se determina con los
+  // valores crudos del payload — la resolución KG->unidades es proporcional,
+  // nunca cambia si un ítem queda con saldo pendiente o no.
+  const quedaAlgoPendiente = input.items.some((item) => (item.cantidad_retiro_inmediato ?? 0) < item.cantidad);
+  if (quedaAlgoPendiente) {
+    if (input.tipo_entrega !== 'RETIRO_CLIENTE' && input.tipo_entrega !== 'ENVIO_DOMICILIO') {
+      throw AppError.badRequest(
+        'PAYLOAD_INVALIDO',
+        'tipo_entrega es requerido (RETIRO_CLIENTE o ENVIO_DOMICILIO) cuando algún ítem queda con cantidad pendiente.',
+      );
+    }
+    if (input.tipo_entrega === 'ENVIO_DOMICILIO') {
+      if (!input.direccion_envio?.trim()) {
+        throw AppError.badRequest('PAYLOAD_INVALIDO', 'direccion_envio es requerida para un envío a domicilio.');
+      }
+      if (!FECHA_REGEX.test(input.fecha_pactada_envio ?? '')) {
+        throw AppError.badRequest('PAYLOAD_INVALIDO', 'fecha_pactada_envio es requerida con formato YYYY-MM-DD.');
+      }
     }
   }
 }
@@ -241,11 +265,20 @@ export async function procesarVentaMixta(
         );
       }
 
+      const esEnvio = input.tipo_entrega === 'ENVIO_DOMICILIO';
       const { rows: ordenRows } = await client.query<OrdenEntrega>(
-        `INSERT INTO ordenes_entrega (id_documento, id_sucursal_origen, cliente_id, id_usuario_creo)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO ordenes_entrega (id_documento, id_sucursal_origen, cliente_id, id_usuario_creo, tipo_entrega, direccion_envio, fecha_pactada_envio)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING ${ORDEN_ENTREGA_COLUMNAS}`,
-        [documento.id_documento, contexto.id_sucursal, input.cliente_id, contexto.id_usuario],
+        [
+          documento.id_documento,
+          contexto.id_sucursal,
+          input.cliente_id,
+          contexto.id_usuario,
+          input.tipo_entrega,
+          esEnvio ? input.direccion_envio!.trim() : null,
+          esEnvio ? input.fecha_pactada_envio : null,
+        ],
       );
       const orden = ordenRows[0];
 
