@@ -6,7 +6,7 @@ import { Comprobante, type ComprobanteProps } from '../../common/Comprobante';
 import { EstadoFiscalBadge } from '../../common/EstadoFiscalBadge';
 import { useAuth } from '../../../context/AuthContext';
 import { useGlobalHotkeys } from '../../../hooks/useGlobalHotkeys';
-import type { Cliente, Documento, FacturarVentaResult, ItemCarrito, TipoDocumento } from '../../../types/domain';
+import type { Cliente, Documento, ItemCarrito, ResultadoRendicion, TipoDocumento } from '../../../types/domain';
 import { CatalogoProductos } from './CatalogoProductos';
 import { CrearCliente } from './CrearCliente';
 import { RendicionPago } from './RendicionPago';
@@ -146,13 +146,21 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
     }
   }
 
-  function onFacturado(resultado: FacturarVentaResult): void {
+  function onFacturado(resultado: ResultadoRendicion): void {
     if (!cliente) return;
     setRendicionAbierta(false);
     setDocumentoFacturado(resultado.documento);
+    const orden = resultado.orden_entrega;
+    const detalleOrden = orden
+      ? ` · Orden de Entrega ${orden.nro_orden}` +
+        (orden.tipo_entrega === 'ENVIO_DOMICILIO'
+          ? ` (envío a ${orden.direccion_envio} el ${orden.fecha_pactada_envio})`
+          : ' (retiro en mostrador)')
+      : '';
     setMensaje(
       `${ETIQUETA_TIPO[resultado.documento.tipo_documento]} · Remito ${resultado.documento.nro_remito} · ` +
         `Saldo pendiente: $${resultado.saldo_pendiente.toFixed(2)}` +
+        detalleOrden +
         (resultado.autorizacion
           ? ` · Autorizado por ${resultado.autorizacion.supervisor} (excedía $${resultado.autorizacion.monto_excedido.toFixed(2)})`
           : ''),
@@ -161,9 +169,7 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
       documento: resultado.documento,
       cliente,
       sucursalNombre: sucursal?.nombre ?? '',
-      pagos: resultado.movimientos
-        .filter((m) => Number(m.haber) > 0)
-        .map((m) => ({ concepto: m.concepto ?? 'Pago', monto: Number(m.haber) })),
+      pagos: resultado.pagos,
       saldoPendiente: resultado.saldo_pendiente,
     });
     limpiarFormulario();
@@ -341,7 +347,7 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
       )}
 
       {rendicionAbierta && cliente && (
-        <RendicionPago total={total} clienteId={cliente.id_cliente} items={items.map(aItemInput)} onExito={onFacturado} />
+        <RendicionPago total={total} clienteId={cliente.id_cliente} items={items} onExito={onFacturado} />
       )}
 
       {crearClienteAbierto && (

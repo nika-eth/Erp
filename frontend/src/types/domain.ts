@@ -196,6 +196,60 @@ export interface FacturarVentaResult {
 }
 
 // -----------------------------------------------------------------------
+// Venta mixta: retiro inmediato + saldo pendiente en Orden de Entrega
+// (ver `POST /api/ventas/facturar-mixta` y `ordenesEntrega.service.ts`).
+// -----------------------------------------------------------------------
+
+/** Intención de cumplimiento del saldo pendiente: lo pasa a buscar el cliente al mostrador, o se lo lleva el camión. Aplica a toda la orden, no por renglón. */
+export type TipoEntregaOrden = 'RETIRO_CLIENTE' | 'ENVIO_DOMICILIO';
+
+export interface ItemVentaMixtaInput extends ItemInput {
+  /** Cuánto de la línea se despacha ya mismo (misma unidad que `cantidad`); el resto queda reservado en una Orden de Entrega Pendiente. Default 0. */
+  cantidad_retiro_inmediato?: number;
+}
+
+export interface ProcesarVentaMixtaInput {
+  cliente_id: number;
+  items: ItemVentaMixtaInput[];
+  pagos: PagoInput[];
+  es_fiscal?: boolean;
+  /** Requerido sólo si algún renglón queda con saldo pendiente. */
+  tipo_entrega?: TipoEntregaOrden;
+  /** Requeridos sólo si `tipo_entrega === 'ENVIO_DOMICILIO'`. */
+  direccion_envio?: string;
+  fecha_pactada_envio?: string; // 'YYYY-MM-DD'
+}
+
+/** Subconjunto de la Orden de Entrega que devuelve la venta mixta, lo justo para el comprobante y el mensaje de mostrador. */
+export interface OrdenEntregaResumen {
+  id_orden_entrega: number;
+  nro_orden: string | null;
+  tipo_entrega: TipoEntregaOrden;
+  direccion_envio: string | null;
+  fecha_pactada_envio: string | null;
+}
+
+export interface ProcesarVentaMixtaResult {
+  documento: Documento;
+  remito_inmediato: Remito | null;
+  orden_entrega: OrdenEntregaResumen | null;
+}
+
+/**
+ * Resultado normalizado que Rendición de Pago devuelve al confirmar,
+ * unificando la venta simple (`facturarVenta`) y la mixta
+ * (`procesarVentaMixta`) en una sola forma para armar el comprobante y el
+ * mensaje de mostrador.
+ */
+export interface ResultadoRendicion {
+  documento: Documento;
+  saldo_pendiente: number;
+  pagos: Array<{ concepto: string; monto: number }>;
+  autorizacion?: { supervisor: string; monto_excedido: number };
+  orden_entrega?: OrdenEntregaResumen | null;
+}
+
+// -----------------------------------------------------------------------
 // Logística y despacho de camiones
 // -----------------------------------------------------------------------
 
