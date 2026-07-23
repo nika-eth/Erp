@@ -193,9 +193,8 @@ export async function listarBacklogOrdenesPendientes(contexto: ContextoAcceso): 
 
 /**
  * Agrega una Orden de Entrega Pendiente a una Hoja de Ruta en `BORRADOR`,
- * validando capacidad de kilos/casilleros del camión (mismo criterio que
- * `logistica.service.ts::asignarEnvio`) contra lo YA asignado a ese viaje.
- * No toca stock — eso sólo pasa al confirmar la salida.
+ * validando capacidad de kilos/casilleros del camión contra lo YA asignado
+ * a ese viaje. No toca stock — eso sólo pasa al confirmar la salida.
  */
 export async function agregarOrdenAHoja(
   id_hoja_de_ruta: number,
@@ -486,7 +485,7 @@ export async function confirmarSalidaHojaDeRuta(id_hoja_de_ruta: number, context
  * vez por viaje, no por remito. Sólo mientras la hoja está en `BORRADOR`:
  * `confirmarSalidaHojaDeRuta` exige que ya esté cargado antes de despachar.
  * No afecta stock ni la asignación de órdenes, así que no hace falta
- * transacción ni bloquear filas (mismo criterio que `actualizarCotEnvio`).
+ * transacción ni bloquear filas.
  */
 export async function actualizarCotHojaDeRuta(id_hoja_de_ruta: number, input: ActualizarCotInput): Promise<HojaDeRuta> {
   const nroCot = input.nro_cot?.trim() ?? '';
