@@ -35,10 +35,11 @@ export async function tomarTareasPendientes(limite = 10): Promise<TareaConDocume
     await client.query('BEGIN');
     const { rows } = await client.query<TareaConDocumento>(
       `SELECT t.id_tarea, t.id_documento, t.reintentos, t.proximo_reintento, t.estado, t.ultimo_error,
-              d.punto_venta, d.tipo_comprobante, d.nro_comprobante_afip, d.total_neto,
+              ca.punto_venta, ca.tipo_comprobante, ca.nro_comprobante_afip, d.total_neto,
               cl.tipo_documento AS tipo_documento_cliente, cl.numero_documento
        FROM cola_facturacion_afip t
        JOIN documentos d ON d.id_documento = t.id_documento
+       JOIN comprobantes_afip ca ON ca.id_documento = t.id_documento
        JOIN clientes cl ON cl.id_cliente = d.cliente_id
        WHERE t.estado = 'PENDIENTE' AND t.proximo_reintento <= NOW()
        ORDER BY t.proximo_reintento
@@ -69,10 +70,11 @@ export async function tomarTareaPorId(id_tarea: number): Promise<TareaConDocumen
     await client.query('BEGIN');
     const { rows } = await client.query<TareaConDocumento>(
       `SELECT t.id_tarea, t.id_documento, t.reintentos, t.proximo_reintento, t.estado, t.ultimo_error,
-              d.punto_venta, d.tipo_comprobante, d.nro_comprobante_afip, d.total_neto,
+              ca.punto_venta, ca.tipo_comprobante, ca.nro_comprobante_afip, d.total_neto,
               cl.tipo_documento AS tipo_documento_cliente, cl.numero_documento
        FROM cola_facturacion_afip t
        JOIN documentos d ON d.id_documento = t.id_documento
+       JOIN comprobantes_afip ca ON ca.id_documento = t.id_documento
        JOIN clientes cl ON cl.id_cliente = d.cliente_id
        WHERE t.id_tarea = $1 AND t.estado = 'PENDIENTE'
        FOR UPDATE OF t`,
@@ -114,7 +116,7 @@ export async function aplicarResultadoTarea(
 ): Promise<void> {
   if (resultado.ok) {
     await client.query(
-      `UPDATE documentos SET cae = $1, cae_vencimiento = $2, estado_afip = 'APROBADO', error_afip_mensaje = NULL
+      `UPDATE comprobantes_afip SET cae = $1, cae_vencimiento = $2, estado_afip = 'APROBADO', error_afip_mensaje = NULL
        WHERE id_documento = $3`,
       [resultado.cae, resultado.caeVencimiento, id_documento],
     );
@@ -126,7 +128,7 @@ export async function aplicarResultadoTarea(
   }
 
   if (resultado.tipo === 'RECHAZADO') {
-    await client.query(`UPDATE documentos SET estado_afip = 'RECHAZADO', error_afip_mensaje = $1 WHERE id_documento = $2`, [
+    await client.query(`UPDATE comprobantes_afip SET estado_afip = 'RECHAZADO', error_afip_mensaje = $1 WHERE id_documento = $2`, [
       resultado.mensaje,
       id_documento,
     ]);
@@ -137,7 +139,7 @@ export async function aplicarResultadoTarea(
     return;
   }
 
-  await client.query(`UPDATE documentos SET error_afip_mensaje = $1 WHERE id_documento = $2`, [
+  await client.query(`UPDATE comprobantes_afip SET error_afip_mensaje = $1 WHERE id_documento = $2`, [
     resultado.mensaje,
     id_documento,
   ]);

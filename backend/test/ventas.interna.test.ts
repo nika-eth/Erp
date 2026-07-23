@@ -41,8 +41,7 @@ function handlerFeliz() {
     }
     if (/INSERT INTO documentos_detalles/.test(sql)) return { rows: [] };
     if (/INSERT INTO documentos\s*\(/.test(sql)) {
-      const [id_sucursal_origen, cliente_id, total_neto, tipo_documento, id_zona, es_fiscal, tipo_comprobante, punto_venta, estado_afip] =
-        params;
+      const [id_sucursal_origen, cliente_id, total_neto, tipo_documento, id_zona, es_fiscal] = params;
       ultimoDocumento = {
         id_documento: 500,
         id_sucursal_origen,
@@ -53,13 +52,6 @@ function handlerFeliz() {
         tipo_documento,
         id_zona,
         es_fiscal,
-        tipo_comprobante,
-        punto_venta,
-        nro_comprobante_afip: null,
-        cae: null,
-        cae_vencimiento: null,
-        estado_afip,
-        error_afip_mensaje: null,
       };
       return { rows: [ultimoDocumento] };
     }
@@ -71,13 +63,20 @@ function handlerFeliz() {
       const [cliente_id, haber, id_documento, id_cuenta, concepto] = params;
       return { rows: [{ id_movimiento: 2, cliente_id, fecha: new Date().toISOString(), debe: '0.00', haber: String(haber), id_documento, id_cuenta, concepto }] };
     }
-    // Sólo se llegan a ejecutar en el segundo test (`es_fiscal` por defecto,
-    // sin certificado AFIP en el entorno de test => cae en CONTINGENCIA).
+    if (/INSERT INTO comprobantes_internos/.test(sql)) {
+      const [id_documento, correlativo_interno] = params;
+      return { rows: [{ id_documento, correlativo_interno, estado_facturacion_interna: 'PENDIENTE' }] };
+    }
+    // Sólo se llegan a ejecutar en el segundo test (endpoint fiscal, sin
+    // certificado AFIP en el entorno de test => cae en CONTINGENCIA).
     if (/pg_advisory_xact_lock/.test(sql)) return { rows: [] };
-    if (/UPDATE documentos SET estado_afip = \$1, error_afip_mensaje = \$2/.test(sql)) {
+    if (/INSERT INTO comprobantes_afip/.test(sql)) {
+      const [id_documento, tipo_comprobante, punto_venta, estado_afip] = params;
+      return { rows: [{ id_documento, tipo_comprobante, punto_venta, nro_comprobante_afip: null, cae: null, cae_vencimiento: null, estado_afip, error_afip_mensaje: null }] };
+    }
+    if (/UPDATE comprobantes_afip SET estado_afip = \$1, error_afip_mensaje = \$2/.test(sql)) {
       const [estado_afip, error_afip_mensaje] = params;
-      ultimoDocumento = { ...ultimoDocumento, estado_afip, error_afip_mensaje };
-      return { rows: [ultimoDocumento] };
+      return { rows: [{ estado_afip, error_afip_mensaje }] };
     }
     if (/INSERT INTO cola_facturacion_afip/.test(sql)) return { rows: [] };
     throw new Error(`Query no esperada en el test: ${sql}`);
@@ -89,39 +88,41 @@ beforeEach(() => {
   setQueryHandler(handlerFeliz());
 });
 
-describe('POST /api/ventas/facturar con es_fiscal: false (Comprobante Interno / Remito X)', () => {
-  it('resuelve el documento en el momento como APROBADO_INTERNO, sin tocar AFIP ni la cola de contingencia', async () => {
+describe('POST /api/ventas/emitir-interno (Comprobante Interno / Remito X)', () => {
+  it('resuelve el documento en el momento como Operación INTERNA, sin tocar AFIP ni la cola de contingencia', async () => {
     const token = crearToken();
 
     const res = await request(app)
-      .post('/api/ventas/facturar')
+      .post('/api/ventas/emitir-interno')
       .set('Authorization', `Bearer ${token}`)
       .send({
         cliente_id: CLIENTE.id_cliente,
         items: [ITEM],
         total_neto: 10656,
         pagos: [{ id_cuenta: 1, monto: 10656 }],
-        es_fiscal: false,
       });
 
     expect(res.status).toBe(201);
     expect(res.body.documento.es_fiscal).toBe(false);
-    expect(res.body.documento.estado_afip).toBe('APROBADO_INTERNO');
+    expect(res.body.documento.estado_afip).toBeNull();
+    expect(res.body.documento.estado_facturacion_interna).toBe('PENDIENTE');
     expect(res.body.documento.cae).toBeNull();
     expect(res.body.saldo_pendiente).toBe(0);
 
     // Nunca debe haber intentado el lock de numeración AFIP, ni encolar
-    // contingencia, ni actualizar cae/estado_afip después del alta.
+    // contingencia, ni tocar `comprobantes_afip`.
     expect(queryLog.some((q) => /pg_advisory_xact_lock/.test(q.sql))).toBe(false);
     expect(queryLog.some((q) => /cola_facturacion_afip/.test(q.sql))).toBe(false);
-    expect(queryLog.some((q) => /UPDATE documentos/.test(q.sql))).toBe(false);
+    expect(queryLog.some((q) => /comprobantes_afip/.test(q.sql))).toBe(false);
   });
+});
 
-  it('sin es_fiscal en el payload, se comporta como venta fiscal (default true)', async () => {
+describe('POST /api/ventas/facturar-fiscal (Operación FISCAL)', () => {
+  it('sin certificado AFIP en el entorno, el documento queda en CONTINGENCIA', async () => {
     const token = crearToken();
 
     const res = await request(app)
-      .post('/api/ventas/facturar')
+      .post('/api/ventas/facturar-fiscal')
       .set('Authorization', `Bearer ${token}`)
       .send({
         cliente_id: CLIENTE.id_cliente,
@@ -132,7 +133,6 @@ describe('POST /api/ventas/facturar con es_fiscal: false (Comprobante Interno / 
 
     expect(res.status).toBe(201);
     expect(res.body.documento.es_fiscal).toBe(true);
-    // Sin certificado AFIP configurado en el entorno de test, cae en CONTINGENCIA (no en APROBADO_INTERNO).
     expect(res.body.documento.estado_afip).toBe('CONTINGENCIA');
   });
 });

@@ -50,12 +50,14 @@ function crearHandler(opts: { ci?: typeof CI | null; remitosX?: (typeof REMITO_X
     if (/FROM documentos WHERE id_documento = \$1 FOR UPDATE/.test(sql)) {
       return { rows: ci ? [ci] : [] };
     }
+    if (/FROM comprobantes_internos WHERE id_documento = \$1 FOR UPDATE/.test(sql)) {
+      return { rows: ci ? [{ id_documento: ci.id_documento, correlativo_interno: 'X-1', estado_facturacion_interna: ci.estado_facturacion_interna }] : [] };
+    }
     if (/FROM clientes WHERE id_cliente/.test(sql)) {
       return { rows: [CLIENTE] };
     }
     if (/INSERT INTO documentos\s*\(/.test(sql)) {
-      const [id_sucursal_origen, cliente_id, total_neto, tipo_documento, id_zona, tipo_comprobante, punto_venta, id_documento_origen_ci] =
-        params;
+      const [id_sucursal_origen, cliente_id, total_neto, tipo_documento, id_zona, id_documento_origen_ci] = params;
       nuevaFactura = {
         id_documento: siguienteIdFactura++,
         id_sucursal_origen,
@@ -66,18 +68,15 @@ function crearHandler(opts: { ci?: typeof CI | null; remitosX?: (typeof REMITO_X
         tipo_documento,
         id_zona,
         es_fiscal: true,
-        tipo_comprobante,
-        punto_venta,
-        nro_comprobante_afip: null,
-        cae: null,
-        cae_vencimiento: null,
-        estado_afip: 'PENDIENTE',
-        error_afip_mensaje: null,
         id_documento_origen_ci,
-        estado_facturacion_interna: null,
         estado_despacho: 'PENDIENTE',
       };
       return { rows: [nuevaFactura] };
+    }
+    if (/INSERT INTO comprobantes_afip/.test(sql)) {
+      const [id_documento, tipo_comprobante, punto_venta, estado_afip] = params;
+      const comprobante = { id_documento, tipo_comprobante, punto_venta, nro_comprobante_afip: null, cae: null, cae_vencimiento: null, estado_afip, error_afip_mensaje: null };
+      return { rows: [comprobante] };
     }
     if (/FROM documentos_detalles WHERE id_documento = \$1$/.test(sql.trim())) {
       return { rows: [ITEM_CI] };
@@ -116,11 +115,10 @@ function crearHandler(opts: { ci?: typeof CI | null; remitosX?: (typeof REMITO_X
       return { rows: [{ cantidad_total: '1', despachado_total: '1' }] };
     }
     if (/UPDATE documentos SET estado_despacho/.test(sql)) return { rows: [] };
-    if (/UPDATE documentos SET estado_facturacion_interna = 'FACTURADA'/.test(sql)) return { rows: [] };
-    if (/UPDATE documentos SET estado_afip = \$1, error_afip_mensaje = \$2/.test(sql)) {
+    if (/UPDATE comprobantes_internos SET estado_facturacion_interna = 'FACTURADA'/.test(sql)) return { rows: [] };
+    if (/UPDATE comprobantes_afip SET estado_afip = \$1, error_afip_mensaje = \$2/.test(sql)) {
       const [estado_afip, error_afip_mensaje] = params;
-      nuevaFactura = { ...nuevaFactura, estado_afip, error_afip_mensaje };
-      return { rows: [nuevaFactura] };
+      return { rows: [{ estado_afip, error_afip_mensaje }] };
     }
     if (/INSERT INTO cola_facturacion_afip/.test(sql)) return { rows: [] };
     if (/pg_advisory_xact_lock/.test(sql)) return { rows: [] };

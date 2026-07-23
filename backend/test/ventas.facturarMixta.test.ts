@@ -48,8 +48,7 @@ function crearHandler(opts: { stock?: { cantidad: string; cantidad_reservada: st
       return { rows: ids.filter((id) => id in CUENTAS_EMPRESA).map((id) => ({ id_cuenta: id, nombre_cuenta: CUENTAS_EMPRESA[id] })) };
     }
     if (/INSERT INTO documentos\s*\(/.test(sql)) {
-      const [id_sucursal_origen, cliente_id, total_neto, tipo_documento, id_zona, es_fiscal, estado_afip, estado_facturacion_interna] =
-        params;
+      const [id_sucursal_origen, cliente_id, total_neto, tipo_documento, id_zona, es_fiscal] = params;
       ultimoDocumento = {
         id_documento: siguienteIdDocumento++,
         id_sucursal_origen,
@@ -60,18 +59,18 @@ function crearHandler(opts: { stock?: { cantidad: string; cantidad_reservada: st
         tipo_documento,
         id_zona,
         es_fiscal,
-        tipo_comprobante: null,
-        punto_venta: null,
-        nro_comprobante_afip: null,
-        cae: null,
-        cae_vencimiento: null,
-        estado_afip,
-        error_afip_mensaje: null,
         id_documento_origen_ci: null,
-        estado_facturacion_interna,
         estado_despacho: 'PENDIENTE',
       };
       return { rows: [ultimoDocumento] };
+    }
+    if (/INSERT INTO comprobantes_afip/.test(sql)) {
+      const [id_documento, tipo_comprobante, punto_venta, estado_afip] = params;
+      return { rows: [{ id_documento, tipo_comprobante, punto_venta, nro_comprobante_afip: null, cae: null, cae_vencimiento: null, estado_afip, error_afip_mensaje: null }] };
+    }
+    if (/INSERT INTO comprobantes_internos/.test(sql)) {
+      const [id_documento, correlativo_interno] = params;
+      return { rows: [{ id_documento, correlativo_interno, estado_facturacion_interna: 'PENDIENTE' }] };
     }
     if (/INSERT INTO documentos_detalles/.test(sql)) return { rows: [] };
     if (/INSERT INTO cuenta_corriente/.test(sql)) return { rows: [] };

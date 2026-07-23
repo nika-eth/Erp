@@ -28,6 +28,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck:test
       - run: npm run test
+      - run: npm run depcruise
       - run: npm run build
 
   frontend:

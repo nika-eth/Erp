@@ -40,6 +40,7 @@ beforeAll(async () => {
 function handlerBase(opts: { saldoActual?: number; supervisorPinHash?: string | null } = {}) {
   const { saldoActual = 0, supervisorPinHash = PIN_HASH } = opts;
   let ultimoDocumento: Record<string, unknown> | null = null;
+  let ultimoComprobante: Record<string, unknown> | null = null;
 
   return (sql: string, params: unknown[]): MockQueryResult => {
     if (/FROM productos WHERE id_producto = ANY/.test(sql)) {
@@ -64,8 +65,7 @@ function handlerBase(opts: { saldoActual?: number; supervisorPinHash?: string | 
     }
     if (/INSERT INTO documentos_detalles/.test(sql)) return { rows: [] };
     if (/INSERT INTO documentos\s*\(/.test(sql)) {
-      const [id_sucursal_origen, cliente_id, total_neto, tipo_documento, id_zona, es_fiscal, tipo_comprobante, punto_venta, estado_afip] =
-        params;
+      const [id_sucursal_origen, cliente_id, total_neto, tipo_documento, id_zona, es_fiscal] = params;
       ultimoDocumento = {
         id_documento: contadorId++,
         id_sucursal_origen,
@@ -76,15 +76,13 @@ function handlerBase(opts: { saldoActual?: number; supervisorPinHash?: string | 
         tipo_documento,
         id_zona,
         es_fiscal,
-        tipo_comprobante,
-        punto_venta,
-        nro_comprobante_afip: null,
-        cae: null,
-        cae_vencimiento: null,
-        estado_afip,
-        error_afip_mensaje: null,
       };
       return { rows: [ultimoDocumento] };
+    }
+    if (/INSERT INTO comprobantes_afip/.test(sql)) {
+      const [id_documento, tipo_comprobante, punto_venta, estado_afip] = params;
+      ultimoComprobante = { id_documento, tipo_comprobante, punto_venta, nro_comprobante_afip: null, cae: null, cae_vencimiento: null, estado_afip, error_afip_mensaje: null };
+      return { rows: [ultimoComprobante] };
     }
     if (/SELECT COALESCE\(SUM\(debe\) - SUM\(haber\), 0\) AS saldo FROM cuenta_corriente/.test(sql)) {
       return { rows: [{ saldo: String(saldoActual) }] };
@@ -100,15 +98,15 @@ function handlerBase(opts: { saldoActual?: number; supervisorPinHash?: string | 
       const [cliente_id, haber, id_documento, id_cuenta, concepto] = params;
       return { rows: [{ id_movimiento: 2, cliente_id, fecha: new Date().toISOString(), debe: '0.00', haber: String(haber), id_documento, id_cuenta, concepto }] };
     }
-    if (/UPDATE documentos SET estado_afip = \$1, error_afip_mensaje = \$2/.test(sql)) {
+    if (/UPDATE comprobantes_afip SET estado_afip = \$1, error_afip_mensaje = \$2/.test(sql)) {
       const [estado_afip, error_afip_mensaje] = params;
-      ultimoDocumento = { ...ultimoDocumento, estado_afip, error_afip_mensaje };
-      return { rows: [ultimoDocumento] };
+      ultimoComprobante = { ...ultimoComprobante, estado_afip, error_afip_mensaje };
+      return { rows: [ultimoComprobante] };
     }
-    if (/UPDATE documentos SET cae = \$1/.test(sql)) {
+    if (/UPDATE comprobantes_afip SET cae = \$1/.test(sql)) {
       const [cae, cae_vencimiento] = params;
-      ultimoDocumento = { ...ultimoDocumento, cae, cae_vencimiento, estado_afip: 'APROBADO' };
-      return { rows: [ultimoDocumento] };
+      ultimoComprobante = { ...ultimoComprobante, cae, cae_vencimiento, estado_afip: 'APROBADO' };
+      return { rows: [ultimoComprobante] };
     }
     if (/INSERT INTO cola_facturacion_afip/.test(sql)) {
       return { rows: [] };
@@ -127,11 +125,11 @@ beforeEach(() => {
   setQueryHandler(handlerBase());
 });
 
-describe('POST /api/ventas/facturar con override de supervisor (x-supervisor-pin)', () => {
+describe('POST /api/ventas/facturar-fiscal con override de supervisor (x-supervisor-pin)', () => {
   it('sin header: no toca la auditoría ni el SET LOCAL (comportamiento normal)', async () => {
     const token = crearToken();
 
-    const res = await request(app).post('/api/ventas/facturar').set('Authorization', `Bearer ${token}`).send(PAYLOAD);
+    const res = await request(app).post('/api/ventas/facturar-fiscal').set('Authorization', `Bearer ${token}`).send(PAYLOAD);
 
     expect(res.status).toBe(201);
     expect(res.body.autorizacion).toBeUndefined();
@@ -144,7 +142,7 @@ describe('POST /api/ventas/facturar con override de supervisor (x-supervisor-pin
     const token = crearToken({ id_usuario: 42 });
 
     const res = await request(app)
-      .post('/api/ventas/facturar')
+      .post('/api/ventas/facturar-fiscal')
       .set('Authorization', `Bearer ${token}`)
       .set('x-supervisor-pin', '4821')
       .send(PAYLOAD);
@@ -161,7 +159,7 @@ describe('POST /api/ventas/facturar con override de supervisor (x-supervisor-pin
     const token = crearToken();
 
     const res = await request(app)
-      .post('/api/ventas/facturar')
+      .post('/api/ventas/facturar-fiscal')
       .set('Authorization', `Bearer ${token}`)
       .set('x-supervisor-pin', '0000')
       .send(PAYLOAD);
@@ -174,7 +172,7 @@ describe('POST /api/ventas/facturar con override de supervisor (x-supervisor-pin
     const token = crearToken();
 
     const res = await request(app)
-      .post('/api/ventas/facturar')
+      .post('/api/ventas/facturar-fiscal')
       .set('Authorization', `Bearer ${token}`)
       .set('x-supervisor-pin', 'abcd')
       .send(PAYLOAD);
@@ -188,7 +186,7 @@ describe('POST /api/ventas/facturar con override de supervisor (x-supervisor-pin
     const token = crearToken();
 
     const res = await request(app)
-      .post('/api/ventas/facturar')
+      .post('/api/ventas/facturar-fiscal')
       .set('Authorization', `Bearer ${token}`)
       .set('x-supervisor-pin', '4821')
       .send(PAYLOAD);

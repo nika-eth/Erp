@@ -25,7 +25,7 @@ describe('Rate limiting', () => {
     });
   });
 
-  describe('POST /api/ventas/facturar con x-supervisor-pin', () => {
+  describe('POST /api/ventas/facturar-fiscal con x-supervisor-pin', () => {
     let PIN_HASH: string;
 
     beforeAll(async () => {
@@ -48,14 +48,14 @@ describe('Rate limiting', () => {
       // Las requests sin header no cuentan para el límite del PIN (payload
       // inválido a propósito: lo único que importa es que no tiran 429).
       for (let i = 0; i < 20; i++) {
-        const res = await request(app).post('/api/ventas/facturar').set('Authorization', `Bearer ${token}`).send({});
+        const res = await request(app).post('/api/ventas/facturar-fiscal').set('Authorization', `Bearer ${token}`).send({});
         expect(res.status).not.toBe(429);
       }
 
       let ultimaRespuesta: request.Response | undefined;
       for (let i = 0; i < 6; i++) {
         ultimaRespuesta = await request(app)
-          .post('/api/ventas/facturar')
+          .post('/api/ventas/facturar-fiscal')
           .set('Authorization', `Bearer ${token}`)
           .set('x-supervisor-pin', '0000') // incorrecto a propósito: lo que se mide es el límite, no el resultado
           .send({});

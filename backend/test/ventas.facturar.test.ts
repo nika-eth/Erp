@@ -62,6 +62,7 @@ let siguienteNroRemito = 1;
  */
 function handlerFeliz(cliente: typeof CLIENTE_CUIT | typeof CLIENTE_DNI) {
   let ultimoDocumento: Record<string, unknown> | null = null;
+  let ultimoComprobante: Record<string, unknown> | null = null;
 
   return (sql: string, params: unknown[]): MockQueryResult => {
     const productos = handlerProductos(sql, params);
@@ -77,8 +78,7 @@ function handlerFeliz(cliente: typeof CLIENTE_CUIT | typeof CLIENTE_DNI) {
       return { rows: [] };
     }
     if (/INSERT INTO documentos\s*\(/.test(sql)) {
-      const [id_sucursal_origen, cliente_id, total_neto, tipo_documento, id_zona, es_fiscal, tipo_comprobante, punto_venta, estado_afip] =
-        params;
+      const [id_sucursal_origen, cliente_id, total_neto, tipo_documento, id_zona, es_fiscal] = params;
       ultimoDocumento = {
         id_documento: siguienteIdDocumento++,
         id_sucursal_origen,
@@ -89,13 +89,6 @@ function handlerFeliz(cliente: typeof CLIENTE_CUIT | typeof CLIENTE_DNI) {
         tipo_documento,
         id_zona,
         es_fiscal,
-        tipo_comprobante,
-        punto_venta,
-        nro_comprobante_afip: null,
-        cae: null,
-        cae_vencimiento: null,
-        estado_afip,
-        error_afip_mensaje: null,
       };
       return { rows: [ultimoDocumento] };
     }
@@ -117,15 +110,29 @@ function handlerFeliz(cliente: typeof CLIENTE_CUIT | typeof CLIENTE_DNI) {
         ],
       };
     }
-    if (/UPDATE documentos SET estado_afip = \$1, error_afip_mensaje = \$2/.test(sql)) {
-      const [estado_afip, error_afip_mensaje] = params;
-      ultimoDocumento = { ...ultimoDocumento, estado_afip, error_afip_mensaje };
-      return { rows: [ultimoDocumento] };
+    if (/INSERT INTO comprobantes_afip/.test(sql)) {
+      const [id_documento, tipo_comprobante, punto_venta, estado_afip] = params;
+      ultimoComprobante = {
+        id_documento,
+        tipo_comprobante,
+        punto_venta,
+        nro_comprobante_afip: null,
+        cae: null,
+        cae_vencimiento: null,
+        estado_afip,
+        error_afip_mensaje: null,
+      };
+      return { rows: [ultimoComprobante] };
     }
-    if (/UPDATE documentos SET cae = \$1/.test(sql)) {
+    if (/UPDATE comprobantes_afip SET estado_afip = \$1, error_afip_mensaje = \$2/.test(sql)) {
+      const [estado_afip, error_afip_mensaje] = params;
+      ultimoComprobante = { ...ultimoComprobante, estado_afip, error_afip_mensaje };
+      return { rows: [ultimoComprobante] };
+    }
+    if (/UPDATE comprobantes_afip SET cae = \$1/.test(sql)) {
       const [cae, cae_vencimiento] = params;
-      ultimoDocumento = { ...ultimoDocumento, cae, cae_vencimiento, estado_afip: 'APROBADO' };
-      return { rows: [ultimoDocumento] };
+      ultimoComprobante = { ...ultimoComprobante, cae, cae_vencimiento, estado_afip: 'APROBADO' };
+      return { rows: [ultimoComprobante] };
     }
     if (/INSERT INTO cola_facturacion_afip/.test(sql)) {
       return { rows: [] };
@@ -142,12 +149,12 @@ beforeEach(() => {
   setQueryHandler(handlerFeliz(CLIENTE_CUIT));
 });
 
-describe('POST /api/ventas/facturar', () => {
+describe('POST /api/ventas/facturar-fiscal', () => {
   it('factura una venta con pago mixto y calcula el saldo pendiente', async () => {
     const token = crearToken();
 
     const res = await request(app)
-      .post('/api/ventas/facturar')
+      .post('/api/ventas/facturar-fiscal')
       .set('Authorization', `Bearer ${token}`)
       .send({
         cliente_id: CLIENTE_CUIT.id_cliente,
@@ -200,15 +207,16 @@ describe('POST /api/ventas/facturar', () => {
           cliente_id,
           total_neto: String(total_neto),
           tipo_documento,
-          estado_afip: 'PENDIENTE',
         };
         return { rows: [ultimoDocumento] };
       }
       if (/INSERT INTO cuenta_corriente/.test(sql)) return { rows: [{ id_movimiento: 1 }] };
       if (/pg_advisory_xact_lock/.test(sql)) return { rows: [] };
-      if (/UPDATE documentos/.test(sql)) {
-        ultimoDocumento = { ...ultimoDocumento, estado_afip: 'CONTINGENCIA' };
-        return { rows: [ultimoDocumento] };
+      if (/INSERT INTO comprobantes_afip/.test(sql)) {
+        return { rows: [{ id_documento: ultimoDocumento?.id_documento, estado_afip: 'PENDIENTE' }] };
+      }
+      if (/UPDATE comprobantes_afip/.test(sql)) {
+        return { rows: [{ estado_afip: 'CONTINGENCIA' }] };
       }
       if (/INSERT INTO cola_facturacion_afip/.test(sql)) return { rows: [] };
       throw new Error(`Query no esperada: ${sql}`);
@@ -216,7 +224,7 @@ describe('POST /api/ventas/facturar', () => {
     const token = crearToken();
 
     const res = await request(app)
-      .post('/api/ventas/facturar')
+      .post('/api/ventas/facturar-fiscal')
       .set('Authorization', `Bearer ${token}`)
       .send({
         cliente_id: CLIENTE_CUIT.id_cliente,
@@ -235,7 +243,7 @@ describe('POST /api/ventas/facturar', () => {
     const token = crearToken();
 
     const res = await request(app)
-      .post('/api/ventas/facturar')
+      .post('/api/ventas/facturar-fiscal')
       .set('Authorization', `Bearer ${token}`)
       .send({
         cliente_id: CLIENTE_CUIT.id_cliente,
@@ -253,7 +261,7 @@ describe('POST /api/ventas/facturar', () => {
     const token = crearToken();
 
     const res = await request(app)
-      .post('/api/ventas/facturar')
+      .post('/api/ventas/facturar-fiscal')
       .set('Authorization', `Bearer ${token}`)
       .send({
         cliente_id: CLIENTE_CUIT.id_cliente,
@@ -271,7 +279,7 @@ describe('POST /api/ventas/facturar', () => {
     const token = crearToken();
 
     const res = await request(app)
-      .post('/api/ventas/facturar')
+      .post('/api/ventas/facturar-fiscal')
       .set('Authorization', `Bearer ${token}`)
       .send({
         cliente_id: CLIENTE_DNI.id_cliente,
@@ -308,7 +316,7 @@ describe('POST /api/ventas/facturar', () => {
     const token = crearToken();
 
     const res = await request(app)
-      .post('/api/ventas/facturar')
+      .post('/api/ventas/facturar-fiscal')
       .set('Authorization', `Bearer ${token}`)
       .send({
         cliente_id: CLIENTE_CUIT.id_cliente,
@@ -328,7 +336,7 @@ describe('POST /api/ventas/facturar', () => {
     const token = crearToken();
 
     const res = await request(app)
-      .post('/api/ventas/facturar')
+      .post('/api/ventas/facturar-fiscal')
       .set('Authorization', `Bearer ${token}`)
       .send({
         cliente_id: CLIENTE_CUIT.id_cliente,
@@ -345,7 +353,7 @@ describe('POST /api/ventas/facturar', () => {
     const token = crearToken();
 
     const res = await request(app)
-      .post('/api/ventas/facturar')
+      .post('/api/ventas/facturar-fiscal')
       .set('Authorization', `Bearer ${token}`)
       .send({ cliente_id: CLIENTE_CUIT.id_cliente, items: [], total_neto: 0, pagos: [] });
 
@@ -357,7 +365,7 @@ describe('POST /api/ventas/facturar', () => {
 
   it('rechaza con 401 sin token de sesión', async () => {
     const res = await request(app)
-      .post('/api/ventas/facturar')
+      .post('/api/ventas/facturar-fiscal')
       .send({ cliente_id: 1, items: [ITEM], total_neto: 10656, pagos: [{ id_cuenta: 1, monto: 10656 }] });
 
     expect(res.status).toBe(401);
@@ -372,7 +380,7 @@ describe('POST /api/ventas/facturar', () => {
     const token = crearToken();
 
     const res = await request(app)
-      .post('/api/ventas/facturar')
+      .post('/api/ventas/facturar-fiscal')
       .set('Authorization', `Bearer ${token}`)
       .send({ cliente_id: 404, items: [ITEM], total_neto: 10656, pagos: [{ id_cuenta: 1, monto: 10656 }] });
 
@@ -395,7 +403,7 @@ describe('POST /api/ventas/facturar', () => {
     const token = crearToken();
 
     const res = await request(app)
-      .post('/api/ventas/facturar')
+      .post('/api/ventas/facturar-fiscal')
       .set('Authorization', `Bearer ${token}`)
       .send({ cliente_id: CLIENTE_CUIT.id_cliente, items: [ITEM], total_neto: 10656, pagos: [{ id_cuenta: 99, monto: 10656 }] });
 

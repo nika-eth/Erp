@@ -2,9 +2,11 @@ import type { Pool, PoolClient } from 'pg';
 import { pool, withTransaction } from '../config/db';
 import { AppError } from '../utils/AppError';
 import { verificarAccesoSucursal } from '../utils/autorizacion.utils';
-import { ETIQUETA_TIPO_DOCUMENTO, redondearMoneda, resolverCantidadUnidades } from '../utils/documento.utils';
+import { DOCUMENTO_COLUMNAS_BASE, ETIQUETA_TIPO_DOCUMENTO, redondearMoneda, resolverCantidadUnidades } from '../utils/documento.utils';
 import { tipoDocumentoVentaPorCliente } from '../utils/identificacion.utils';
 import { buscarClientePorId } from './clientes.service';
+import { crearComprobanteAfip } from './emision/comprobantesAfip.repository';
+import { crearComprobanteInterno } from './emision/comprobantesInternos.repository';
 import { liberarReserva, registrarReserva } from './reservas.service';
 import { despacharDocumento, type ContextoRemito, type DespachoItem } from './remitos.service';
 import {
@@ -43,10 +45,6 @@ export async function bloquearOrdenEntregaPorId(client: PoolClient, id_orden_ent
   );
   return rows[0] ?? null;
 }
-
-const DOCUMENTO_COLUMNAS_VENTA = `id_documento, id_sucursal_origen, nro_remito, fecha, cliente_id, total_neto, tipo_documento,
-  id_zona, es_fiscal, tipo_comprobante, punto_venta, nro_comprobante_afip, cae, cae_vencimiento, estado_afip,
-  error_afip_mensaje, id_documento_origen_ci, estado_facturacion_interna, estado_despacho`;
 
 export async function obtenerDetallesOrdenEntrega(client: Queryable, id_orden_entrega: number): Promise<OrdenEntregaDetalle[]> {
   const { rows } = await client.query<OrdenEntregaDetalle>(
@@ -168,25 +166,40 @@ export async function procesarVentaMixta(
       client,
     );
 
+    // NO dispara la solicitud de CAE a AFIP (ver comentario de la función):
+    // sólo deja constancia en la satélite que corresponda, agnóstica del
+    // stock/reservas que se procesan más abajo.
     const esFiscal = input.es_fiscal !== false;
-    const estadoAfipInicial = esFiscal ? 'PENDIENTE' : 'APROBADO_INTERNO';
 
     const { rows: documentoRows } = await client.query<Documento>(
-      `INSERT INTO documentos (id_sucursal_origen, fecha, cliente_id, total_neto, tipo_documento, id_zona, es_fiscal, estado_afip, estado_facturacion_interna)
-       VALUES ($1, NOW(), $2, $3, $4, $5, $6, $7, $8)
-       RETURNING ${DOCUMENTO_COLUMNAS_VENTA}`,
-      [
-        contexto.id_sucursal,
-        input.cliente_id,
-        totalNeto,
-        tipo_documento,
-        cliente.id_zona,
-        esFiscal,
-        estadoAfipInicial,
-        esFiscal ? null : 'PENDIENTE',
-      ],
+      `INSERT INTO documentos (id_sucursal_origen, fecha, cliente_id, total_neto, tipo_documento, id_zona, es_fiscal)
+       VALUES ($1, NOW(), $2, $3, $4, $5, $6)
+       RETURNING ${DOCUMENTO_COLUMNAS_BASE}`,
+      [contexto.id_sucursal, input.cliente_id, totalNeto, tipo_documento, cliente.id_zona, esFiscal],
     );
-    const documento: Documento = { ...documentoRows[0], items };
+    let documento: Documento = { ...documentoRows[0], items };
+    if (esFiscal) {
+      const comprobante = await crearComprobanteAfip(client, {
+        id_documento: documento.id_documento,
+        tipo_comprobante: null,
+        punto_venta: null,
+        estado_afip: 'PENDIENTE',
+      });
+      documento = { ...documento, ...comprobante, estado_facturacion_interna: null };
+    } else {
+      const comprobante = await crearComprobanteInterno(client, { id_documento: documento.id_documento, nro_remito: documento.nro_remito });
+      documento = {
+        ...documento,
+        tipo_comprobante: null,
+        punto_venta: null,
+        nro_comprobante_afip: null,
+        cae: null,
+        cae_vencimiento: null,
+        estado_afip: null,
+        error_afip_mensaje: null,
+        estado_facturacion_interna: comprobante.estado_facturacion_interna,
+      };
+    }
     await insertarDetalles(client, documento.id_documento, items);
 
     await client.query(

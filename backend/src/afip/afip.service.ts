@@ -77,7 +77,7 @@ export async function solicitarCaeParaDocumento(
       if (nroComprobante === null) {
         const ultimo = await consultarUltimoAutorizado(auth, params.puntoVenta, params.tipoComprobante, controller.signal);
         nroComprobante = ultimo + 1;
-        await client.query(`UPDATE documentos SET nro_comprobante_afip = $1 WHERE id_documento = $2`, [
+        await client.query(`UPDATE comprobantes_afip SET nro_comprobante_afip = $1 WHERE id_documento = $2`, [
           nroComprobante,
           params.id_documento,
         ]);

@@ -14,9 +14,6 @@ export const TIPO_COMPROBANTE_AFIP: Record<Extract<TipoDocumento, 'FACTURA_A' | 
 
 export const TIPO_COMPROBANTE_NOTA_CREDITO_AFIP = { A: 3, B: 8 } as const;
 
-/** Remito interno sin validez fiscal, impreso mientras el documento está en CONTINGENCIA. */
-export const TIPO_COMPROBANTE_REMITO_INTERNO = 91;
-
 /** DocTipo AFIP: 80 = CUIT, 96 = DNI. */
 export function docTipoAfip(tipoDocumentoCliente: TipoDocumentoCliente): 80 | 96 {
   return tipoDocumentoCliente === 'CUIT' ? 80 : 96;

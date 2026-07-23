@@ -1,19 +1,17 @@
 import type { Request, Response } from 'express';
 import { AppError } from '../utils/AppError';
 import { procesarVentaMixta } from '../services/ordenesEntrega.service';
-import { facturarComprobanteInterno, facturarVenta, guardarPresupuesto } from '../services/ventas.service';
+import { emitirVentaInterna, facturarComprobanteInterno, facturarVentaFiscal, guardarPresupuesto } from '../services/ventas.service';
 import type { FacturarVentaInput, ProcesarVentaMixtaInput } from '../types/domain';
 
 /**
- * POST /api/ventas/facturar
+ * POST /api/ventas/facturar-fiscal
  *
- * Endpoint crítico del mostrador (atajo F12). Recibe el payload cargado en
- * el Módulo de Carga Unificada y ejecuta, en una única transacción:
- *   - el alta de la cabecera en `documentos` (dispara la asignación
- *     automática de `nro_remito`),
- *   - el DEBE en `cuenta_corriente` por el total de la venta (dispara la
- *     validación de límite de crédito),
- *   - un HABER en `cuenta_corriente` por cada medio de pago cargado.
+ * Operación FISCAL del mostrador (atajo F12 con el ModoOperacion en
+ * FISCAL, ver `RendicionPago.tsx`). Recibe el payload cargado en el Módulo
+ * de Carga Unificada y ejecuta, en una única transacción, el alta del
+ * documento + cuenta_corriente + la solicitud de CAE a AFIP
+ * (`emisorFiscalAfip`).
  *
  * `id_sucursal` e `id_usuario` salen de `req.user` (firmado en el JWT), no
  * del body, para que no se puedan manipular. Si el trigger de límite de
@@ -22,13 +20,36 @@ import type { FacturarVentaInput, ProcesarVentaMixtaInput } from '../types/domai
  * esté presente (ver `verifySupervisorOverride`), en cuyo caso se saltea el
  * límite y se audita quién lo autorizó.
  */
-export async function postFacturarVenta(req: Request, res: Response): Promise<void> {
+export async function postFacturarVentaFiscal(req: Request, res: Response): Promise<void> {
   if (!req.user) {
     throw AppError.unauthorized();
   }
 
   const input = req.body as FacturarVentaInput;
-  const resultado = await facturarVenta(
+  const resultado = await facturarVentaFiscal(
+    { id_sucursal: req.user.id_sucursal, id_usuario: req.user.id_usuario },
+    input,
+    req.supervisorAutorizacion ?? null,
+  );
+
+  res.status(201).json(resultado);
+}
+
+/**
+ * POST /api/ventas/emitir-interno
+ *
+ * Operación INTERNA del mostrador (ModoOperacion en INTERNA): mismo alta de
+ * documento + cuenta_corriente que la fiscal, pero nunca llama a
+ * `emisorFiscalAfip` — usa `emisorInterno`, que no tiene ninguna dependencia
+ * de `src/afip/**` (firewall verificado en CI por `dependency-cruiser`).
+ */
+export async function postEmitirVentaInterna(req: Request, res: Response): Promise<void> {
+  if (!req.user) {
+    throw AppError.unauthorized();
+  }
+
+  const input = req.body as FacturarVentaInput;
+  const resultado = await emitirVentaInterna(
     { id_sucursal: req.user.id_sucursal, id_usuario: req.user.id_usuario },
     input,
     req.supervisorAutorizacion ?? null,
