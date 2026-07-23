@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError } from '../../../api/client';
 import {
+  actualizarCotHojaDeRuta,
   agregarOrdenAHoja,
   anularHojaDeRuta,
   confirmarSalida,
@@ -73,6 +74,8 @@ export function PizarraCamiones({ onSalir }: { onSalir: () => void }): JSX.Eleme
   const [motivoPromptAbierto, setMotivoPromptAbierto] = useState(false);
   const [motivo, setMotivo] = useState('');
 
+  const [cotInput, setCotInput] = useState('');
+
   const [cargando, setCargando] = useState(false);
   const [procesando, setProcesando] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -99,6 +102,10 @@ export function PizarraCamiones({ onSalir }: { onSalir: () => void }): JSX.Eleme
   useEffect(() => {
     if (motivoPromptAbierto) motivoRef.current?.focus();
   }, [motivoPromptAbierto]);
+
+  useEffect(() => {
+    setCotInput(hoja?.nro_cot ?? '');
+  }, [hoja?.id_hoja_de_ruta, hoja?.nro_cot]);
 
   useEffect(() => {
     if (!error && !mensaje) return;
@@ -179,8 +186,31 @@ export function PizarraCamiones({ onSalir }: { onSalir: () => void }): JSX.Eleme
     }
   }
 
+  async function onGuardarCot(): Promise<void> {
+    if (!hoja || procesando) return;
+    if (!cotInput.trim()) {
+      setError('El COT es requerido para confirmar la salida del camión.');
+      return;
+    }
+    setProcesando(true);
+    setError(null);
+    try {
+      const { hoja_de_ruta } = await actualizarCotHojaDeRuta(hoja.id_hoja_de_ruta, { nro_cot: cotInput.trim() });
+      setHoja(hoja_de_ruta);
+      setMensaje(`COT ${hoja_de_ruta.nro_cot} cargado para la hoja #${hoja_de_ruta.id_hoja_de_ruta}.`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'No se pudo cargar el COT.');
+    } finally {
+      setProcesando(false);
+    }
+  }
+
   async function onConfirmarSalida(): Promise<void> {
     if (!hoja || procesando || hoja.ordenes.length === 0) return;
+    if (!hoja.nro_cot?.trim()) {
+      setError('Cargá el COT del viaje (ARBA) antes de confirmar la salida.');
+      return;
+    }
     setProcesando(true);
     setError(null);
     try {
@@ -367,6 +397,41 @@ export function PizarraCamiones({ onSalir }: { onSalir: () => void }): JSX.Eleme
                     </li>
                   ))}
                 </ul>
+              )}
+
+              {/* COT del viaje (ARBA) — se carga una vez por hoja, requerido antes de confirmar salida */}
+              {hoja.ordenes.length > 0 && (
+                <div className="mt-4 rounded border border-neutral-200 bg-neutral-50 p-3">
+                  <p className="mb-2 text-xs font-medium uppercase tracking-wide text-neutral-500">
+                    Código de Operación de Traslado (COT)
+                  </p>
+                  {editable ? (
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={cotInput}
+                        onChange={(e) => setCotInput(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && void onGuardarCot()}
+                        placeholder="Nº de COT (ARBA)"
+                        className={`flex-1 rounded border px-3 py-1.5 text-sm font-mono focus:border-acento ${
+                          !hoja.nro_cot ? 'border-amber-300 bg-amber-50' : 'border-neutral-300'
+                        }`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void onGuardarCot()}
+                        disabled={procesando}
+                        className="whitespace-nowrap rounded border border-acento px-3 py-1.5 text-xs font-medium text-acento hover:bg-acento/10 disabled:opacity-50"
+                      >
+                        Guardar COT
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="font-mono text-sm text-neutral-700">{hoja.nro_cot ?? '—'}</p>
+                  )}
+                  {editable && !hoja.nro_cot && (
+                    <p className="mt-1.5 text-xs text-amber-700">Requerido antes de confirmar la salida (F2).</p>
+                  )}
+                </div>
               )}
 
               {/* Prompt de anulación */}

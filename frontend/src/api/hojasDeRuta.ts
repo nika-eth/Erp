@@ -1,5 +1,6 @@
 import { apiFetch } from './client';
 import type {
+  ActualizarCotHojaInput,
   AgregarOrdenAHojaInput,
   AnularHojaDeRutaInput,
   CrearHojaDeRutaInput,
@@ -27,6 +28,11 @@ export function agregarOrdenAHoja(id: number, input: AgregarOrdenAHojaInput): Pr
 
 export function quitarOrdenDeHoja(id: number, idOrdenEntrega: number): Promise<{ hoja_de_ruta: HojaDeRuta }> {
   return apiFetch(`/hojas-de-ruta/${id}/ordenes/${idOrdenEntrega}`, { method: 'DELETE' });
+}
+
+/** Carga el COT (ARBA) del viaje completo. Sólo mientras la hoja está en BORRADOR. */
+export function actualizarCotHojaDeRuta(id: number, input: ActualizarCotHojaInput): Promise<{ hoja_de_ruta: HojaDeRuta }> {
+  return apiFetch(`/hojas-de-ruta/${id}/cot`, { method: 'PUT', body: input });
 }
 
 /** Confirma la salida: despacha TODO el viaje en lote (libera reservas, baja físico, genera remitos). */

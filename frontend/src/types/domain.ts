@@ -291,6 +291,13 @@ export interface AnularOrdenEntregaInput {
   motivo: string;
 }
 
+/** Edita la intención de cumplimiento de una orden pendiente (caso "flete pagado aparte"). */
+export interface EditarTipoEntregaOrdenInput {
+  tipo_entrega: TipoEntregaOrden;
+  direccion_envio?: string;
+  fecha_pactada_envio?: string; // 'YYYY-MM-DD'
+}
+
 // -----------------------------------------------------------------------
 // Pizarra de Camiones / Hojas de Ruta (F10)
 // (ver `hojas-de-ruta` routes y `hojasDeRuta.service.ts`).
@@ -323,6 +330,8 @@ export interface HojaDeRuta {
   motivo_anulacion: string | null;
   id_usuario_anulo: number | null;
   fecha_anulacion: string | null;
+  /** Código de Operación de Traslado (ARBA), exigido por viaje — se carga una vez para toda la hoja, antes de confirmar la salida. */
+  nro_cot: string | null;
   ordenes: HojaDeRutaOrden[];
 }
 
@@ -351,6 +360,11 @@ export interface AgregarOrdenAHojaInput {
 
 export interface AnularHojaDeRutaInput {
   motivo: string;
+}
+
+/** Código de Operación de Traslado (ARBA) del viaje completo — se carga una vez por Hoja de Ruta, antes de confirmar la salida. */
+export interface ActualizarCotHojaInput {
+  nro_cot: string;
 }
 
 // -----------------------------------------------------------------------
