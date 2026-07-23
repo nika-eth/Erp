@@ -380,7 +380,9 @@ export interface ActualizarCotHojaInput {
 }
 
 // -----------------------------------------------------------------------
-// Logística y despacho de camiones
+// Logística: datos maestros compartidos por la venta (zona del cliente) y
+// la Pizarra de Camiones. El circuito viejo de Control de Ruteo
+// (envios/asignarEnvio/Ocupación Diaria) se retiró.
 // -----------------------------------------------------------------------
 
 export interface Zona {
@@ -395,46 +397,6 @@ export interface Camion {
   chofer: string;
   capacidad_casilleros: number;
   capacidad_kilos_max: string;
-}
-
-export interface EnvioAsignado {
-  id_envio: number;
-  id_documento: number;
-  nro_remito: number | null;
-  cliente: string;
-  zona: string;
-  casillerosRequeridos: number;
-  kilosTotales: number;
-  /** Código de Operación de Traslado (ARBA), cargado desde Control de Ruteo. */
-  nro_cot: string | null;
-}
-
-export interface ActualizarCotInput {
-  nro_cot: string;
-}
-
-export interface CamionJornada {
-  id_camion: number;
-  chofer: string;
-  patente: string;
-  capacidadCasilleros: number;
-  capacidadKilosMax: number;
-  envios: EnvioAsignado[];
-}
-
-export interface DocumentoPendiente {
-  id_documento: number;
-  nro_remito: number | null;
-  cliente: string;
-  zona: string | null;
-  casillerosRequeridos: number | null;
-  kilosTotales: number;
-}
-
-export interface AsignarEnvioInput {
-  id_camion: number;
-  id_documento: number;
-  fecha_despacho: string;
 }
 
 // -----------------------------------------------------------------------

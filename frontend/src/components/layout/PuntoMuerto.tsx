@@ -2,7 +2,6 @@ const ATAJOS = [
   { tecla: 'F5', descripcion: 'Carga Unificada (nueva venta / presupuesto)' },
   { tecla: 'F3', descripcion: 'Historial de Documentos' },
   { tecla: 'F9', descripcion: 'Ficha de Cuenta Corriente' },
-  { tecla: 'F4', descripcion: 'Control de Ruteo y Ocupación Diaria' },
   { tecla: 'F6', descripcion: 'Retirar Orden de Entrega' },
   { tecla: 'F10', descripcion: 'Pizarra de Camiones (envíos a domicilio)' },
 ];

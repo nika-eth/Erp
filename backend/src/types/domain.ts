@@ -264,7 +264,11 @@ export interface EstadoServicioAfip {
 }
 
 // -----------------------------------------------------------------------
-// Logística y despacho de camiones
+// Logística: datos maestros compartidos por la venta (zona del cliente) y
+// la Pizarra de Camiones (Hojas de Ruta) — ver `sql/002_logistica.sql`.
+// El circuito viejo de Control de Ruteo (envios/asignarEnvio/Ocupación
+// Diaria) se retiró; `ActualizarCotInput` sigue en pie porque lo usa el COT
+// de Hojas de Ruta (`hojasDeRuta.service.ts::actualizarCotHojaDeRuta`).
 // -----------------------------------------------------------------------
 
 export interface Zona {
@@ -281,47 +285,8 @@ export interface Camion {
   capacidad_kilos_max: string; // NUMERIC llega como string desde pg
 }
 
-/** Un remito ya asignado a un camión, tal como se muestra en la grilla de ruteo. */
-export interface EnvioAsignado {
-  id_envio: number;
-  id_documento: number;
-  nro_remito: number | null;
-  cliente: string;
-  zona: string;
-  casillerosRequeridos: number;
-  kilosTotales: number;
-  /** Código de Operación de Traslado (ARBA), cargado desde Control de Ruteo. */
-  nro_cot: string | null;
-}
-
 export interface ActualizarCotInput {
   nro_cot: string;
-}
-
-/** Ocupación de un camión para una fecha de despacho puntual. */
-export interface CamionJornada {
-  id_camion: number;
-  chofer: string;
-  patente: string;
-  capacidadCasilleros: number;
-  capacidadKilosMax: number;
-  envios: EnvioAsignado[];
-}
-
-/** Un remito facturado que todavía no fue asignado a ningún camión. */
-export interface DocumentoPendiente {
-  id_documento: number;
-  nro_remito: number | null;
-  cliente: string;
-  zona: string | null;
-  casillerosRequeridos: number | null;
-  kilosTotales: number;
-}
-
-export interface AsignarEnvioInput {
-  id_camion: number;
-  id_documento: number;
-  fecha_despacho: string; // 'YYYY-MM-DD'
 }
 
 // -----------------------------------------------------------------------
