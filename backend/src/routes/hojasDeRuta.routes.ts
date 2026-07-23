@@ -3,6 +3,7 @@ import {
   deleteQuitarOrdenDeHoja,
   getBacklogOrdenesPendientes,
   getHojaDeRuta,
+  getListarHojasDeRuta,
   postAgregarOrdenAHoja,
   postAnularHojaDeRuta,
   postConfirmarSalida,
@@ -17,6 +18,7 @@ export const hojasDeRutaRouter = Router();
 hojasDeRutaRouter.use(authenticateJWT);
 
 hojasDeRutaRouter.get('/backlog', asyncHandler(getBacklogOrdenesPendientes));
+hojasDeRutaRouter.get('/', asyncHandler(getListarHojasDeRuta));
 hojasDeRutaRouter.post('/', asyncHandler(postCrearHojaDeRuta));
 hojasDeRutaRouter.get('/:id', asyncHandler(getHojaDeRuta));
 hojasDeRutaRouter.post('/:id/ordenes', asyncHandler(postAgregarOrdenAHoja));

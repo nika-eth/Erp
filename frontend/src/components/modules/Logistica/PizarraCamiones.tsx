@@ -7,12 +7,14 @@ import {
   confirmarSalida,
   crearHojaDeRuta,
   listarBacklog,
+  listarHojasDeRuta,
+  obtenerHojaDeRuta,
   quitarOrdenDeHoja,
 } from '../../../api/hojasDeRuta';
 import { listarCamiones } from '../../../api/logistica';
 import { useAuth } from '../../../context/AuthContext';
 import { useGlobalHotkeys } from '../../../hooks/useGlobalHotkeys';
-import type { Camion, EstadoHojaDeRuta, HojaDeRuta, OrdenEntregaBacklog } from '../../../types/domain';
+import type { Camion, EstadoHojaDeRuta, HojaDeRuta, HojaDeRutaResumen, OrdenEntregaBacklog } from '../../../types/domain';
 
 const ETIQUETA_ESTADO: Record<EstadoHojaDeRuta, string> = {
   BORRADOR: 'Borrador',
@@ -56,14 +58,15 @@ function BarraCapacidad({ etiqueta, usado, maximo, unidad }: { etiqueta: string;
  * al confirmar la salida se despacha todo en lote. Convive con el Control de
  * Ruteo (F4): son circuitos paralelos.
  *
- * Nota: el backend no expone un listado de hojas de ruta, así que la pantalla
- * es un banco de trabajo de UNA hoja por vez — se crea, se arma y se
- * confirma/anula en la misma sesión.
+ * Se trabaja de a una hoja por vez, pero cualquier hoja en BORRADOR puede
+ * retomarse después de recargar la pantalla (o entrar desde otra sesión) —
+ * ver la lista de "Hojas recientes" cuando no hay ninguna en armado.
  */
 export function PizarraCamiones({ onSalir }: { onSalir: () => void }): JSX.Element {
   const { sucursal } = useAuth();
   const [camiones, setCamiones] = useState<Camion[]>([]);
   const [backlog, setBacklog] = useState<OrdenEntregaBacklog[]>([]);
+  const [hojasRecientes, setHojasRecientes] = useState<HojaDeRutaResumen[]>([]);
   const [hoja, setHoja] = useState<HojaDeRuta | null>(null);
 
   const [crearFormAbierto, setCrearFormAbierto] = useState(false);
@@ -88,12 +91,18 @@ export function PizarraCamiones({ onSalir }: { onSalir: () => void }): JSX.Eleme
     setBacklog(ordenes);
   }
 
+  async function cargarHojasRecientes(): Promise<void> {
+    const { hojas_de_ruta } = await listarHojasDeRuta();
+    setHojasRecientes(hojas_de_ruta);
+  }
+
   useEffect(() => {
     setCargando(true);
-    Promise.all([listarCamiones(), listarBacklog()])
-      .then(([c, b]) => {
+    Promise.all([listarCamiones(), listarBacklog(), listarHojasDeRuta()])
+      .then(([c, b, h]) => {
         setCamiones(c.camiones);
         setBacklog(b.ordenes);
+        setHojasRecientes(h.hojas_de_ruta);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : 'No se pudo cargar la pizarra.'))
       .finally(() => setCargando(false));
@@ -146,8 +155,23 @@ export function PizarraCamiones({ onSalir }: { onSalir: () => void }): JSX.Eleme
       setHoja(hoja_de_ruta);
       setCrearFormAbierto(false);
       setMensaje(`Hoja de ruta #${hoja_de_ruta.id_hoja_de_ruta} creada. Agregá las órdenes del backlog.`);
+      await cargarHojasRecientes();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo crear la hoja de ruta.');
+    } finally {
+      setProcesando(false);
+    }
+  }
+
+  async function onRetomarHoja(id: number): Promise<void> {
+    if (procesando) return;
+    setProcesando(true);
+    setError(null);
+    try {
+      const { hoja_de_ruta } = await obtenerHojaDeRuta(id);
+      setHoja(hoja_de_ruta);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'No se pudo retomar la hoja de ruta.');
     } finally {
       setProcesando(false);
     }
@@ -217,7 +241,7 @@ export function PizarraCamiones({ onSalir }: { onSalir: () => void }): JSX.Eleme
       const { hoja_de_ruta } = await confirmarSalida(hoja.id_hoja_de_ruta);
       setMensaje(`Hoja #${hoja_de_ruta.id_hoja_de_ruta} despachada: ${hoja_de_ruta.ordenes.length} orden(es) en ruta.`);
       setHoja(null);
-      await cargarBacklog();
+      await Promise.all([cargarBacklog(), cargarHojasRecientes()]);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo confirmar la salida.');
     } finally {
@@ -235,7 +259,7 @@ export function PizarraCamiones({ onSalir }: { onSalir: () => void }): JSX.Eleme
       setHoja(null);
       setMotivoPromptAbierto(false);
       setMotivo('');
-      await cargarBacklog();
+      await Promise.all([cargarBacklog(), cargarHojasRecientes()]);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo anular la hoja de ruta.');
     } finally {
@@ -342,8 +366,41 @@ export function PizarraCamiones({ onSalir }: { onSalir: () => void }): JSX.Eleme
           </div>
 
           {!hoja ? (
-            <div className="flex h-48 items-center justify-center px-4 text-center text-sm text-neutral-400">
-              No hay ninguna hoja en armado. Presioná F1 para crear una nueva.
+            <div className="px-4 py-4">
+              <p className="mb-4 text-center text-sm text-neutral-400">
+                No hay ninguna hoja en armado. Presioná F1 para crear una nueva.
+              </p>
+              {hojasRecientes.length > 0 && (
+                <div>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">Hojas recientes</p>
+                  <ul className="divide-y divide-neutral-100 text-sm">
+                    {hojasRecientes.map((h) => (
+                      <li key={h.id_hoja_de_ruta} className="flex flex-wrap items-center gap-2 py-2">
+                        <span className="font-mono text-xs text-neutral-500">#{h.id_hoja_de_ruta}</span>
+                        <span className="text-neutral-700">
+                          {h.patente} · {h.chofer ?? '—'}
+                        </span>
+                        <span className={`rounded px-2 py-0.5 text-xs font-medium ${CLASE_ESTADO[h.estado]}`}>
+                          {ETIQUETA_ESTADO[h.estado]}
+                        </span>
+                        <span className="font-mono text-xs text-neutral-500">
+                          {h.cantidadOrdenes} orden(es) · {h.fecha_despacho.slice(0, 10)}
+                        </span>
+                        {h.estado === 'BORRADOR' && (
+                          <button
+                            type="button"
+                            onClick={() => void onRetomarHoja(h.id_hoja_de_ruta)}
+                            disabled={procesando}
+                            className="ml-auto whitespace-nowrap rounded border border-acento px-2.5 py-1 text-xs font-medium text-acento hover:bg-acento/10 disabled:opacity-50"
+                          >
+                            Retomar
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           ) : (
             <div className="p-4">

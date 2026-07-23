@@ -817,6 +817,18 @@ export interface HojaDeRuta {
   ordenes: HojaDeRutaOrden[];
 }
 
+/** Fila liviana para el listado de Hojas de Ruta (sin el detalle de órdenes) — permite retomar una hoja en BORRADOR después de recargar la Pizarra. */
+export interface HojaDeRutaResumen {
+  id_hoja_de_ruta: number;
+  id_camion: number;
+  patente: string;
+  chofer: string | null;
+  fecha_despacho: string;
+  estado: EstadoHojaDeRuta;
+  nro_cot: string | null;
+  cantidadOrdenes: number;
+}
+
 /** Una Orden de Entrega ya agregada a una Hoja de Ruta, con el snapshot de ocupación calculado al agregarla. */
 export interface HojaDeRutaOrden {
   id_hoja_de_ruta_orden: number;

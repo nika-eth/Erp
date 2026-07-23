@@ -12,6 +12,7 @@ import type {
   CrearHojaDeRutaInput,
   HojaDeRuta,
   HojaDeRutaOrden,
+  HojaDeRutaResumen,
   OrdenEntregaBacklog,
   Zona,
 } from '../types/domain';
@@ -84,6 +85,45 @@ export async function crearHojaDeRuta(input: CrearHojaDeRutaInput, contexto: { i
   const hoja = rows[0];
   hoja.ordenes = [];
   return hoja;
+}
+
+/**
+ * Listado liviano de Hojas de Ruta recientes (sin el detalle de órdenes),
+ * para poder retomar una hoja en `BORRADOR` después de recargar la Pizarra
+ * — hasta este incremento, la pantalla sólo podía trabajar con la hoja
+ * creada en la misma sesión del navegador.
+ */
+export async function listarHojasDeRuta(): Promise<HojaDeRutaResumen[]> {
+  const { rows } = await pool.query<{
+    id_hoja_de_ruta: number;
+    id_camion: number;
+    patente: string;
+    chofer: string | null;
+    fecha_despacho: string;
+    estado: string;
+    nro_cot: string | null;
+    cantidad_ordenes: string;
+  }>(
+    `SELECT hr.id_hoja_de_ruta, hr.id_camion, c.patente, hr.chofer, hr.fecha_despacho, hr.estado, hr.nro_cot,
+            COUNT(hro.id_hoja_de_ruta_orden) AS cantidad_ordenes
+     FROM hojas_de_ruta hr
+     JOIN camiones c ON c.id_camion = hr.id_camion
+     LEFT JOIN hoja_de_ruta_ordenes hro ON hro.id_hoja_de_ruta = hr.id_hoja_de_ruta
+     GROUP BY hr.id_hoja_de_ruta, c.patente
+     ORDER BY hr.fecha_creacion DESC
+     LIMIT 50`,
+  );
+
+  return rows.map((r) => ({
+    id_hoja_de_ruta: r.id_hoja_de_ruta,
+    id_camion: r.id_camion,
+    patente: r.patente,
+    chofer: r.chofer,
+    fecha_despacho: r.fecha_despacho,
+    estado: r.estado as HojaDeRutaResumen['estado'],
+    nro_cot: r.nro_cot,
+    cantidadOrdenes: Number(r.cantidad_ordenes),
+  }));
 }
 
 export async function obtenerHojaDeRuta(id_hoja_de_ruta: number): Promise<HojaDeRuta> {
@@ -253,6 +293,15 @@ export async function agregarOrdenAHoja(
       [orden.id_orden_entrega],
     );
     const kilosTotales = redondearMoneda(Number(kilosRows[0].kilos_totales));
+    // `hoja_de_ruta_ordenes.kilos_asignados` exige > 0 (CHECK): un producto
+    // sin `peso_teorico_kg` cargado da 0 acá, lo que violaría ese CHECK con
+    // un 500 genérico de Postgres en vez de este 400 explícito.
+    if (kilosTotales <= 0) {
+      throw AppError.badRequest(
+        'ORDEN_SIN_PESO',
+        `La orden ${input.nro_orden} no tiene un peso calculable: algún producto no tiene peso_teorico_kg cargado. Cargalo en Gestión de Productos antes de subir la orden a un camión.`,
+      );
+    }
 
     const { rows: ocupacionRows } = await client.query<{ casilleros_usados: string; kilos_usados: string }>(
       `SELECT COALESCE(SUM(casilleros_ocupados), 0) AS casilleros_usados, COALESCE(SUM(kilos_asignados), 0) AS kilos_usados
