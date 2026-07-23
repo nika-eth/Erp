@@ -13,9 +13,22 @@ import type {
  * `pinSupervisor`, si viene, viaja como header `x-supervisor-pin` para
  * autorizar una venta que excede el límite de crédito del cliente (ver
  * `verifySupervisorOverride` en el backend).
+ *
+ * Dos endpoints separados (no uno con `es_fiscal` en el body): el modo de
+ * operación (Fiscal/Interna, ver `ModoOperacionContext`) se decide ANTES de
+ * llamar acá, en la barra superior de Carga Unificada — `RendicionPago.tsx`
+ * elige cuál de las dos llamar, nunca manda un flag.
  */
-export function facturarVenta(input: FacturarVentaInput, pinSupervisor?: string): Promise<FacturarVentaResult> {
-  return apiFetch('/ventas/facturar', {
+export function facturarVentaFiscal(input: FacturarVentaInput, pinSupervisor?: string): Promise<FacturarVentaResult> {
+  return apiFetch('/ventas/facturar-fiscal', {
+    method: 'POST',
+    body: input,
+    headers: pinSupervisor ? { 'x-supervisor-pin': pinSupervisor } : undefined,
+  });
+}
+
+export function emitirVentaInterna(input: FacturarVentaInput, pinSupervisor?: string): Promise<FacturarVentaResult> {
+  return apiFetch('/ventas/emitir-interno', {
     method: 'POST',
     body: input,
     headers: pinSupervisor ? { 'x-supervisor-pin': pinSupervisor } : undefined,

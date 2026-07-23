@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError } from '../../../api/client';
 import { listarCuentasEmpresa } from '../../../api/catalogos';
-import { facturarVenta, procesarVentaMixta } from '../../../api/ventas';
+import { emitirVentaInterna, facturarVentaFiscal, procesarVentaMixta } from '../../../api/ventas';
+import { useModoOperacion } from '../../../context/ModoOperacionContext';
 import { useGlobalHotkeys } from '../../../hooks/useGlobalHotkeys';
 import { Modal } from '../../common/Modal';
 import { PinInput } from '../../common/PinInput';
@@ -28,8 +29,16 @@ function unidadLabel(item: ItemCarrito): string {
 
 /**
  * Modal de Rendición de Pago Mixto (F12). Distribuye el total entre varias
- * cuentas y, al confirmar (F5 fiscal / F6 interno), factura contra el
- * backend. Un remanente sin cubrir es válido: queda como saldo deudor.
+ * cuentas y, al confirmar (F12 — un solo atajo, ver más abajo), emite el
+ * comprobante contra el backend según el Modo de Operación elegido en la
+ * barra superior de Carga Unificada (`ModoOperacionContext`). Un remanente
+ * sin cubrir es válido: queda como saldo deudor.
+ *
+ * El modo se decide ANTES de entrar acá (F4 en la pantalla anterior), no en
+ * este modal: mantener F5/F6 como dos botones acá generaba una doble fuente
+ * de verdad peligrosa (pantalla fucsia pero F5 fiscal por costumbre). Este
+ * modal actúa "a ciegas": lee el modo del contexto y dispara al endpoint
+ * que corresponde, sin ofrecer otra opción.
  *
  * Además maneja la VENTA MIXTA (F7): un editor por renglón donde el cajero
  * indica cuánto se lleva el cliente ahora y cuánto queda pendiente. Si algo
@@ -40,6 +49,8 @@ function unidadLabel(item: ItemCarrito): string {
  * simple de siempre.
  */
 export function RendicionPago({ total, clienteId, items, onExito }: RendicionPagoProps): JSX.Element {
+  const { modo } = useModoOperacion();
+  const esFiscal = modo === 'FISCAL';
   const [cuentas, setCuentas] = useState<CuentaEmpresa[]>([]);
   const [pagos, setPagos] = useState<PagoInput[]>([]);
   const [filtro, setFiltro] = useState('');
@@ -50,8 +61,6 @@ export function RendicionPago({ total, clienteId, items, onExito }: RendicionPag
   const [error, setError] = useState<string | null>(null);
   const [mostrarAutorizacion, setMostrarAutorizacion] = useState(false);
   const [pin, setPin] = useState('');
-  /** Recordado entre el primer intento y el reintento con PIN de supervisor, para no perder la elección F5/F6. */
-  const [esFiscalElegido, setEsFiscalElegido] = useState(true);
 
   // --- Venta mixta (split por renglón, F7) ---
   const [mostrarSplit, setMostrarSplit] = useState(false);
@@ -139,7 +148,7 @@ export function RendicionPago({ total, clienteId, items, onExito }: RendicionPag
     }
   }
 
-  async function enviarFacturacion(esFiscal: boolean, pinSupervisor?: string): Promise<void> {
+  async function enviarFacturacion(pinSupervisor?: string): Promise<void> {
     if (enviando) return;
     setEnviando(true);
     setError(null);
@@ -177,21 +186,20 @@ export function RendicionPago({ total, clienteId, items, onExito }: RendicionPag
           orden_entrega: res.orden_entrega,
         };
       } else {
-        const res = await facturarVenta(
-          {
-            cliente_id: clienteId,
-            items: items.map((it) => ({
-              id_producto: it.id_producto,
-              cantidad: it.cantidad,
-              unidad_ingreso: it.unidad_ingreso,
-              precio_unitario: it.precio_unitario,
-            })),
-            total_neto: total,
-            pagos,
-            es_fiscal: esFiscal,
-          },
-          pinSupervisor,
-        );
+        const payload = {
+          cliente_id: clienteId,
+          items: items.map((it) => ({
+            id_producto: it.id_producto,
+            cantidad: it.cantidad,
+            unidad_ingreso: it.unidad_ingreso,
+            precio_unitario: it.precio_unitario,
+          })),
+          total_neto: total,
+          pagos,
+        };
+        const res = esFiscal
+          ? await facturarVentaFiscal(payload, pinSupervisor)
+          : await emitirVentaInterna(payload, pinSupervisor);
         resultado = {
           documento: res.documento,
           saldo_pendiente: res.saldo_pendiente,
@@ -221,7 +229,7 @@ export function RendicionPago({ total, clienteId, items, onExito }: RendicionPag
     }
   }
 
-  function confirmarFacturacion(esFiscal: boolean): void {
+  function confirmarFacturacion(): void {
     if (pagos.length === 0) return;
     // Bloqueo estricto: un envío a domicilio sin dirección/fecha no puede cobrarse.
     if (hayPendiente && tipoEntrega === 'ENVIO_DOMICILIO' && envioIncompleto) {
@@ -230,12 +238,11 @@ export function RendicionPago({ total, clienteId, items, onExito }: RendicionPag
       setError('Para un envío a domicilio, la dirección y la fecha pactada son obligatorias.');
       return;
     }
-    setEsFiscalElegido(esFiscal);
-    void enviarFacturacion(esFiscal);
+    void enviarFacturacion();
   }
 
   function onPinCompleto(pinCompleto: string): void {
-    void enviarFacturacion(esFiscalElegido, pinCompleto);
+    void enviarFacturacion(pinCompleto);
   }
 
   function cancelarAutorizacion(): void {
@@ -244,20 +251,28 @@ export function RendicionPago({ total, clienteId, items, onExito }: RendicionPag
     setPin('');
   }
 
-  // F5 (Factura Fiscal) / F6 (Comprobante Interno) confirman; F7 abre/cierra
-  // el editor de split (venta mixta). Se desactivan mientras se elige el
-  // monto de una cuenta o se espera el PIN, para no confirmar sin querer.
+  // F12 confirma (un solo atajo: el modo Fiscal/Interna ya se decidió antes,
+  // en la barra superior de Carga Unificada — F4); F7 abre/cierra el editor
+  // de split (venta mixta). Se desactivan mientras se elige el monto de una
+  // cuenta o se espera el PIN, para no confirmar sin querer.
   useGlobalHotkeys(
     {
-      F5: () => confirmarFacturacion(true),
-      F6: () => confirmarFacturacion(false),
+      F12: () => confirmarFacturacion(),
       F7: () => setMostrarSplit((v) => !v),
     },
     !cuentaSeleccionada && !mostrarAutorizacion,
   );
 
   return (
-    <Modal titulo="Rendición de Pago Mixto (F5 fiscal · F6 interno · F7 entrega)" ancho="lg">
+    <Modal
+      titulo={`Rendición de Pago Mixto (${esFiscal ? 'Fiscal' : 'Interna'} · F7 entrega · F12 ${
+        esFiscal ? 'facturar' : 'emitir comprobante'
+      })`}
+      ancho="lg"
+    >
+      <div className={`mb-3 rounded px-3 py-1.5 text-center text-xs font-semibold ${esFiscal ? 'bg-acento/10 text-acento' : 'bg-fuchsia-100 text-fuchsia-900'}`}>
+        Modo {esFiscal ? 'FISCAL (AFIP)' : 'INTERNA (Remito X, sin AFIP)'}
+      </div>
       <div className="mb-4 grid grid-cols-3 gap-4 text-sm">
         <div>
           <div className="text-neutral-500">Total venta</div>
@@ -472,9 +487,9 @@ export function RendicionPago({ total, clienteId, items, onExito }: RendicionPag
       {mostrarAutorizacion && (
         <div className="mt-4 rounded border border-amber-300 bg-amber-50 p-4">
           <p className="mb-3 text-sm font-medium text-amber-900">
-            Autorizar con PIN de Supervisor para facturar de todos modos
+            Autorizar con PIN de Supervisor para {esFiscal ? 'facturar' : 'emitir el comprobante'} de todos modos
             {' '}
-            ({esFiscalElegido ? 'Factura Fiscal' : 'Comprobante Interno'})
+            ({esFiscal ? 'Factura Fiscal' : 'Comprobante Interno'})
           </p>
           <PinInput value={pin} onChange={setPin} onComplete={onPinCompleto} disabled={enviando} autoFocus />
           <button
@@ -490,12 +505,14 @@ export function RendicionPago({ total, clienteId, items, onExito }: RendicionPag
 
       <p className="mt-4 text-xs text-neutral-400">
         {enviando
-          ? 'Facturando…'
+          ? esFiscal
+            ? 'Facturando…'
+            : 'Emitiendo comprobante…'
           : mostrarAutorizacion
             ? 'Esc cancela'
-            : hayPendiente
-              ? 'F5 Factura Fiscal · F6 Comprobante Interno · F7 entrega · Esc cancela — el saldo queda en Orden de Entrega'
-              : 'F5 Factura Fiscal (AFIP) · F6 Comprobante Interno (Remito X) · F7 entrega · Esc cancela'}
+            : `F12 ${esFiscal ? 'Factura Fiscal (AFIP)' : 'Comprobante Interno (Remito X)'} · F7 entrega · Esc cancela${
+                hayPendiente ? ' — el saldo queda en Orden de Entrega' : ''
+              }`}
       </p>
     </Modal>
   );
