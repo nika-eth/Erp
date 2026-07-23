@@ -5,12 +5,18 @@ import type {
   AnularHojaDeRutaInput,
   CrearHojaDeRutaInput,
   HojaDeRuta,
+  HojaDeRutaResumen,
   OrdenEntregaBacklog,
 } from '../types/domain';
 
 /** Backlog de la Pizarra: órdenes de envío a domicilio pendientes, sin viaje asignado. */
 export function listarBacklog(): Promise<{ ordenes: OrdenEntregaBacklog[] }> {
   return apiFetch('/hojas-de-ruta/backlog');
+}
+
+/** Listado liviano de Hojas de Ruta recientes, para poder retomar una en BORRADOR. */
+export function listarHojasDeRuta(): Promise<{ hojas_de_ruta: HojaDeRutaResumen[] }> {
+  return apiFetch('/hojas-de-ruta');
 }
 
 export function crearHojaDeRuta(input: CrearHojaDeRutaInput): Promise<{ hoja_de_ruta: HojaDeRuta }> {

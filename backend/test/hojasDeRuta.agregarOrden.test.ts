@@ -138,6 +138,16 @@ describe('POST /api/hojas-de-ruta/:id/ordenes', () => {
     expect(res.body.error).toBe('ORDEN_YA_ASIGNADA');
   });
 
+  it('rechaza con 400 si la orden no tiene peso calculable (producto sin peso_teorico_kg)', async () => {
+    setQueryHandler(crearHandler({ kilosOrden: 0 }));
+    const token = crearToken({ id_sucursal: 1 });
+
+    const res = await request(app).post('/api/hojas-de-ruta/5/ordenes').set('Authorization', `Bearer ${token}`).send(PAYLOAD_VALIDO);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('ORDEN_SIN_PESO');
+  });
+
   it('rechaza con 409 cuando el camión supera la capacidad de kilos del viaje', async () => {
     setQueryHandler(crearHandler({ kilosOrden: 100, kilosUsados: 4950 }));
     const token = crearToken({ id_sucursal: 1 });

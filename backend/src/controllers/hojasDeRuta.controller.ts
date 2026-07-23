@@ -7,6 +7,7 @@ import {
   confirmarSalidaHojaDeRuta,
   crearHojaDeRuta,
   listarBacklogOrdenesPendientes,
+  listarHojasDeRuta,
   obtenerHojaDeRuta,
   quitarOrdenDeHoja,
 } from '../services/hojasDeRuta.service';
@@ -31,6 +32,16 @@ export async function getBacklogOrdenesPendientes(req: Request, res: Response): 
 
   const ordenes = await listarBacklogOrdenesPendientes({ rol: req.user.rol, id_sucursal: req.user.id_sucursal });
   res.json({ ordenes });
+}
+
+/** GET /api/hojas-de-ruta — listado liviano, para retomar una hoja en BORRADOR. */
+export async function getListarHojasDeRuta(req: Request, res: Response): Promise<void> {
+  if (!req.user) {
+    throw AppError.unauthorized();
+  }
+
+  const hojas = await listarHojasDeRuta();
+  res.json({ hojas_de_ruta: hojas });
 }
 
 export async function getHojaDeRuta(req: Request, res: Response): Promise<void> {
