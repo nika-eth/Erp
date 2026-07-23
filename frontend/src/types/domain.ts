@@ -292,6 +292,68 @@ export interface AnularOrdenEntregaInput {
 }
 
 // -----------------------------------------------------------------------
+// Pizarra de Camiones / Hojas de Ruta (F10)
+// (ver `hojas-de-ruta` routes y `hojasDeRuta.service.ts`).
+// -----------------------------------------------------------------------
+
+export type EstadoHojaDeRuta = 'BORRADOR' | 'EN_TRANSITO' | 'ANULADA';
+
+/** Una Orden de Entrega ya agregada a una Hoja de Ruta, con el snapshot de ocupación calculado al agregarla. */
+export interface HojaDeRutaOrden {
+  id_hoja_de_ruta_orden: number;
+  id_hoja_de_ruta: number;
+  id_orden_entrega: number;
+  nro_orden: string | null;
+  cliente: string;
+  id_sucursal_despacho: number;
+  casillerosOcupados: number;
+  kilosAsignados: number;
+}
+
+export interface HojaDeRuta {
+  id_hoja_de_ruta: number;
+  id_camion: number;
+  chofer: string | null;
+  fecha_despacho: string;
+  estado: EstadoHojaDeRuta;
+  id_usuario_creo: number;
+  fecha_creacion: string;
+  id_usuario_confirmo: number | null;
+  fecha_confirmacion: string | null;
+  motivo_anulacion: string | null;
+  id_usuario_anulo: number | null;
+  fecha_anulacion: string | null;
+  ordenes: HojaDeRutaOrden[];
+}
+
+/** Una Orden de Entrega Pendiente de envío a domicilio, todavía sin viaje asignado (backlog de la Pizarra). */
+export interface OrdenEntregaBacklog {
+  id_orden_entrega: number;
+  nro_orden: string | null;
+  cliente: string;
+  zona: string | null;
+  casillerosRequeridos: number | null;
+  kilosTotales: number;
+  direccion_envio: string | null;
+  fecha_pactada_envio: string | null;
+}
+
+export interface CrearHojaDeRutaInput {
+  id_camion: number;
+  chofer?: string | null;
+  fecha_despacho: string; // 'YYYY-MM-DD'
+}
+
+export interface AgregarOrdenAHojaInput {
+  nro_orden: string;
+  id_sucursal_despacho: number;
+}
+
+export interface AnularHojaDeRutaInput {
+  motivo: string;
+}
+
+// -----------------------------------------------------------------------
 // Logística y despacho de camiones
 // -----------------------------------------------------------------------
 

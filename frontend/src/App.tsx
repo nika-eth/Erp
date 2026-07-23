@@ -6,13 +6,22 @@ import { GestionProductos } from './components/modules/GestionProductos';
 import { HistorialDocumentos } from './components/modules/HistorialDocumentos';
 import { RetirarOrdenEntrega } from './components/modules/RetirarOrdenEntrega';
 import { ControlRuteo } from './components/modules/Logistica/ControlRuteo';
+import { PizarraCamiones } from './components/modules/Logistica/PizarraCamiones';
 import { Header } from './components/layout/Header';
 import { LoginGate } from './components/layout/LoginGate';
 import { PuntoMuerto } from './components/layout/PuntoMuerto';
 import { useAuth } from './context/AuthContext';
 import { HotkeySuspensionBoundary, useGlobalHotkeys } from './hooks/useGlobalHotkeys';
 
-type Modulo = 'PUNTO_MUERTO' | 'CARGA_UNIFICADA' | 'HISTORIAL' | 'LOGISTICA' | 'RETIRO_ORDEN' | 'PRODUCTOS' | 'CUENTAS_PAGAR';
+type Modulo =
+  | 'PUNTO_MUERTO'
+  | 'CARGA_UNIFICADA'
+  | 'HISTORIAL'
+  | 'LOGISTICA'
+  | 'RETIRO_ORDEN'
+  | 'PIZARRA_CAMIONES'
+  | 'PRODUCTOS'
+  | 'CUENTAS_PAGAR';
 
 function Mostrador(): JSX.Element {
   const { user } = useAuth();
@@ -37,6 +46,7 @@ function Mostrador(): JSX.Element {
       F3: () => setModulo('HISTORIAL'),
       F4: () => setModulo('LOGISTICA'),
       F6: () => setModulo('RETIRO_ORDEN'),
+      F10: () => setModulo('PIZARRA_CAMIONES'),
       ...(esAdmin ? { F7: () => setModulo('PRODUCTOS') } : {}),
       ...(esAdminOSupervisor ? { F8: () => setModulo('CUENTAS_PAGAR') } : {}),
     },
@@ -59,6 +69,7 @@ function Mostrador(): JSX.Element {
           {modulo === 'HISTORIAL' && <HistorialDocumentos onSalir={volverAPuntoMuerto} />}
           {modulo === 'LOGISTICA' && <ControlRuteo onSalir={volverAPuntoMuerto} />}
           {modulo === 'RETIRO_ORDEN' && <RetirarOrdenEntrega onSalir={volverAPuntoMuerto} />}
+          {modulo === 'PIZARRA_CAMIONES' && <PizarraCamiones onSalir={volverAPuntoMuerto} />}
           {modulo === 'PRODUCTOS' && esAdmin && <GestionProductos onSalir={volverAPuntoMuerto} />}
           {modulo === 'CUENTAS_PAGAR' && esAdminOSupervisor && <CuentasPorPagar onSalir={volverAPuntoMuerto} />}
         </HotkeySuspensionBoundary>
