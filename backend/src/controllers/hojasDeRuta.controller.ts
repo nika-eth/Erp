@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { AppError } from '../utils/AppError';
 import {
+  actualizarCotHojaDeRuta,
   agregarOrdenAHoja,
   anularHojaDeRuta,
   confirmarSalidaHojaDeRuta,
@@ -9,7 +10,7 @@ import {
   obtenerHojaDeRuta,
   quitarOrdenDeHoja,
 } from '../services/hojasDeRuta.service';
-import type { AgregarOrdenAHojaInput, AnularHojaDeRutaInput, CrearHojaDeRutaInput } from '../types/domain';
+import type { ActualizarCotInput, AgregarOrdenAHojaInput, AnularHojaDeRutaInput, CrearHojaDeRutaInput } from '../types/domain';
 
 export async function postCrearHojaDeRuta(req: Request, res: Response): Promise<void> {
   if (!req.user) {
@@ -69,6 +70,18 @@ export async function postAnularHojaDeRuta(req: Request, res: Response): Promise
 
   const input = req.body as AnularHojaDeRutaInput;
   const hoja = await anularHojaDeRuta(Number(req.params.id), { id_usuario: req.user.id_usuario }, input);
+
+  res.json({ hoja_de_ruta: hoja });
+}
+
+/** PUT /api/hojas-de-ruta/:id/cot — Código de Operación de Traslado (ARBA) del viaje completo. */
+export async function putActualizarCotHojaDeRuta(req: Request, res: Response): Promise<void> {
+  if (!req.user) {
+    throw AppError.unauthorized();
+  }
+
+  const input = req.body as ActualizarCotInput;
+  const hoja = await actualizarCotHojaDeRuta(Number(req.params.id), input);
 
   res.json({ hoja_de_ruta: hoja });
 }

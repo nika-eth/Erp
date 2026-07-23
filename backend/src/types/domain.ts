@@ -771,6 +771,20 @@ export interface AnularOrdenEntregaInput {
   motivo: string;
 }
 
+/**
+ * Edita la intención de cumplimiento de una Orden de Entrega ya creada — el
+ * caso típico es el "flete pagado aparte": el cliente compró para retirar,
+ * al día siguiente decide que se lo lleven y el cajero factura el flete por
+ * separado. `direccion_envio`/`fecha_pactada_envio` sólo se exigen (y sólo
+ * se guardan) cuando `tipo_entrega === 'ENVIO_DOMICILIO'`; al volver a
+ * `RETIRO_CLIENTE` se limpian a NULL. Ver `editarTipoEntregaOrden`.
+ */
+export interface EditarTipoEntregaOrdenInput {
+  tipo_entrega: TipoEntregaOrden;
+  direccion_envio?: string;
+  fecha_pactada_envio?: string; // 'YYYY-MM-DD'
+}
+
 // -----------------------------------------------------------------------
 // Pizarra de Camiones / Hojas de Ruta (ver `sql/015_hojas_de_ruta.sql` y
 // `hojasDeRuta.service.ts`) — Flujo C, incremento 2 de Gestión de Stock
@@ -798,6 +812,8 @@ export interface HojaDeRuta {
   motivo_anulacion: string | null;
   id_usuario_anulo: number | null;
   fecha_anulacion: string | null;
+  /** Código de Operación de Traslado (ARBA), exigido por viaje — se carga una vez para toda la hoja, antes de confirmar la salida (ver `actualizarCotHojaDeRuta`). */
+  nro_cot: string | null;
   ordenes: HojaDeRutaOrden[];
 }
 
