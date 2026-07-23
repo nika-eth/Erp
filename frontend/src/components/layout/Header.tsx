@@ -9,6 +9,7 @@ const ETIQUETAS_MODULO: Record<string, string> = {
   HISTORIAL: 'Historial de Documentos (F3)',
   CUENTA_CORRIENTE: 'Ficha de Cuenta Corriente (F9)',
   LOGISTICA: 'Control de Ruteo y Ocupación Diaria (F4)',
+  RETIRO_ORDEN: 'Retirar Orden de Entrega (F6)',
   PRODUCTOS: 'Gestión de Productos (F7)',
   CUENTAS_PAGAR: 'Cuentas por Pagar (F8)',
 };

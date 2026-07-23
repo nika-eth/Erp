@@ -250,6 +250,48 @@ export interface ResultadoRendicion {
 }
 
 // -----------------------------------------------------------------------
+// Orden de Entrega Pendiente completa (pantalla Retirar Orden de Entrega, F6)
+// (ver `GET/POST /api/ordenes-entrega/:nro_orden` y `ordenesEntrega.service.ts`).
+// -----------------------------------------------------------------------
+
+export type EstadoOrdenEntrega = 'PENDIENTE' | 'RETIRADA' | 'ANULADA';
+
+export interface OrdenEntregaDetalle {
+  id_orden_entrega_detalle: number;
+  id_orden_entrega: number;
+  id_producto: number;
+  sku: string;
+  descripcion: string;
+  cantidad: number;
+}
+
+export interface OrdenEntrega {
+  id_orden_entrega: number;
+  nro_orden: string | null;
+  id_documento: number;
+  id_sucursal_origen: number;
+  cliente_id: number;
+  estado: EstadoOrdenEntrega;
+  tipo_entrega: TipoEntregaOrden;
+  direccion_envio: string | null;
+  fecha_pactada_envio: string | null;
+  fecha_creacion: string;
+  id_usuario_creo: number;
+  id_sucursal_retiro: number | null;
+  id_usuario_retiro: number | null;
+  fecha_retiro: string | null;
+  id_remito_retiro: number | null;
+  motivo_anulacion: string | null;
+  id_usuario_anulo: number | null;
+  fecha_anulacion: string | null;
+  detalles: OrdenEntregaDetalle[];
+}
+
+export interface AnularOrdenEntregaInput {
+  motivo: string;
+}
+
+// -----------------------------------------------------------------------
 // Logística y despacho de camiones
 // -----------------------------------------------------------------------
 
