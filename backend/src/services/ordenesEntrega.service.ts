@@ -5,8 +5,8 @@ import { verificarAccesoSucursal } from '../utils/autorizacion.utils';
 import { DOCUMENTO_COLUMNAS_BASE, ETIQUETA_TIPO_DOCUMENTO, redondearMoneda, resolverCantidadUnidades } from '../utils/documento.utils';
 import { tipoDocumentoVentaPorCliente } from '../utils/identificacion.utils';
 import { buscarClientePorId } from './clientes.service';
-import { crearComprobanteAfip } from './emision/comprobantesAfip.repository';
-import { crearComprobanteInterno } from './emision/comprobantesInternos.repository';
+import { emisorFiscalAfip } from './emision/emisorFiscalAfip';
+import { emisorInterno } from './emision/emisorInterno';
 import { liberarReserva, registrarReserva } from './reservas.service';
 import { despacharDocumento, type ContextoRemito, type DespachoItem } from './remitos.service';
 import {
@@ -133,13 +133,13 @@ function validarPayloadVentaMixta(input: ProcesarVentaMixtaInput): void {
  * `retirarOrdenEntrega`). Todo en una única transacción: cabecera +
  * detalles + cuenta_corriente (el límite de crédito lo sigue validando el
  * trigger de Postgres, igual que en `ventas.service.ts::facturarVenta`) +
- * despacho inmediato + reserva/Orden de Entrega.
+ * emisión del comprobante + despacho inmediato + reserva/Orden de Entrega.
  *
- * Simplificación de este incremento: a diferencia de `facturarVenta`, NO
- * dispara la solicitud de CAE a AFIP (el documento queda con
- * `estado_afip='PENDIENTE'` para una venta fiscal) — la integración AFIP de
- * este flujo queda para un paso siguiente, fuera del alcance pedido (que es
- * el modelo de stock/reservas).
+ * La emisión usa el mismo `EmisorComprobante` que `ventas.service.ts`
+ * (`emisorFiscalAfip`/`emisorInterno`, ver `services/emision/`): una Venta
+ * Mixta fiscal pide su CAE real a AFIP acá mismo, dentro de la misma
+ * transacción — no queda un documento fiscal "pendiente" sin CAE mientras
+ * la mercadería ya sale por el retiro inmediato.
  */
 export async function procesarVentaMixta(
   contexto: ContextoFacturacion,
@@ -166,9 +166,6 @@ export async function procesarVentaMixta(
       client,
     );
 
-    // NO dispara la solicitud de CAE a AFIP (ver comentario de la función):
-    // sólo deja constancia en la satélite que corresponda, agnóstica del
-    // stock/reservas que se procesan más abajo.
     const esFiscal = input.es_fiscal !== false;
 
     const { rows: documentoRows } = await client.query<Documento>(
@@ -178,28 +175,17 @@ export async function procesarVentaMixta(
       [contexto.id_sucursal, input.cliente_id, totalNeto, tipo_documento, cliente.id_zona, esFiscal],
     );
     let documento: Documento = { ...documentoRows[0], items };
-    if (esFiscal) {
-      const comprobante = await crearComprobanteAfip(client, {
-        id_documento: documento.id_documento,
-        tipo_comprobante: null,
-        punto_venta: null,
-        estado_afip: 'PENDIENTE',
-      });
-      documento = { ...documento, ...comprobante, estado_facturacion_interna: null };
-    } else {
-      const comprobante = await crearComprobanteInterno(client, { id_documento: documento.id_documento, nro_remito: documento.nro_remito });
-      documento = {
-        ...documento,
-        tipo_comprobante: null,
-        punto_venta: null,
-        nro_comprobante_afip: null,
-        cae: null,
-        cae_vencimiento: null,
-        estado_afip: null,
-        error_afip_mensaje: null,
-        estado_facturacion_interna: comprobante.estado_facturacion_interna,
-      };
-    }
+
+    const emisor = esFiscal ? emisorFiscalAfip : emisorInterno;
+    const resultadoEmision = await emisor.emitir(client, {
+      id_documento: documento.id_documento,
+      nro_remito: documento.nro_remito,
+      tipo_documento,
+      total_neto: totalNeto,
+      cliente,
+    });
+    documento = { ...documento, ...resultadoEmision };
+
     await insertarDetalles(client, documento.id_documento, items);
 
     await client.query(

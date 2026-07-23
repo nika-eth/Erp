@@ -381,11 +381,6 @@ export interface FacturarComprobanteInternoResult {
 
 // -----------------------------------------------------------------------
 // Cuentas por Pagar (ver `sql/012_cuentas_por_pagar.sql`)
-//
-// Este incremento es sólo el CRUD de datos maestros (proveedores, facturas,
-// notas de crédito, anticipos, cotizaciones). El motor contable (asientos
-// automáticos de provisión/cancelación/retenciones) llega con el servicio
-// de emisión de Órdenes de Pago, todavía no implementado.
 // -----------------------------------------------------------------------
 
 export type MonedaSoportada = 'ARS' | 'USD';

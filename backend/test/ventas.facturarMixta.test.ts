@@ -1,8 +1,19 @@
 import request from 'supertest';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import * as wsfe from '../src/afip/wsfe.service';
 import { createApp } from '../src/app';
 import { crearToken } from './helpers/auth';
 import { queryLog, resetQueryLog, setQueryHandler, type MockQueryResult } from './setup/pgMock';
+
+vi.mock('../src/afip/wsaa.service', () => ({
+  obtenerTicketAcceso: vi.fn(async () => ({ token: 'TKN', sign: 'SGN', expiraEn: Date.now() + 60_000 })),
+}));
+
+vi.mock('../src/afip/wsfe.service', () => ({
+  consultarUltimoAutorizado: vi.fn(),
+  solicitarCae: vi.fn(),
+  consultarComprobante: vi.fn(),
+}));
 
 const app = createApp();
 
@@ -72,6 +83,19 @@ function crearHandler(opts: { stock?: { cantidad: string; cantidad_reservada: st
       const [id_documento, correlativo_interno] = params;
       return { rows: [{ id_documento, correlativo_interno, estado_facturacion_interna: 'PENDIENTE' }] };
     }
+    // Camino AFIP: por defecto (sin mockear `wsfe.service`) cae en
+    // CONTINGENCIA; el test dedicado que mockea WSAA/WSFE ejercita el
+    // camino de éxito (`UPDATE comprobantes_afip SET cae = $1`).
+    if (/pg_advisory_xact_lock/.test(sql)) return { rows: [] };
+    if (/UPDATE comprobantes_afip SET nro_comprobante_afip/.test(sql)) return { rows: [] };
+    if (/UPDATE comprobantes_afip SET cae = \$1/.test(sql)) {
+      const [cae, cae_vencimiento] = params;
+      return { rows: [{ cae, cae_vencimiento, estado_afip: 'APROBADO' }] };
+    }
+    if (/UPDATE comprobantes_afip SET estado_afip = \$1, error_afip_mensaje = \$2/.test(sql)) {
+      return { rows: [{ estado_afip: params[0], error_afip_mensaje: params[1] }] };
+    }
+    if (/INSERT INTO cola_facturacion_afip/.test(sql)) return { rows: [] };
     if (/INSERT INTO documentos_detalles/.test(sql)) return { rows: [] };
     if (/INSERT INTO cuenta_corriente/.test(sql)) return { rows: [] };
     if (/SELECT cantidad, cantidad_despachada_total FROM documentos_detalles/.test(sql)) {
@@ -150,9 +174,63 @@ function crearHandler(opts: { stock?: { cantidad: string; cantidad_reservada: st
 beforeEach(() => {
   resetQueryLog();
   setQueryHandler(crearHandler({}));
+  vi.mocked(wsfe.consultarUltimoAutorizado).mockReset();
+  vi.mocked(wsfe.solicitarCae).mockReset();
+  vi.mocked(wsfe.consultarComprobante).mockReset();
 });
 
 describe('POST /api/ventas/facturar-mixta', () => {
+  it('con AFIP disponible, una Venta Mixta fiscal obtiene su CAE real (no queda PENDIENTE)', async () => {
+    vi.mocked(wsfe.consultarUltimoAutorizado).mockResolvedValue(10);
+    vi.mocked(wsfe.solicitarCae).mockResolvedValue({
+      resultado: 'A',
+      cae: '71234567891234',
+      caeFchVto: '20260805',
+      observaciones: null,
+      errores: null,
+    });
+    const token = crearToken();
+
+    const res = await request(app)
+      .post('/api/ventas/facturar-mixta')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        cliente_id: 1,
+        items: [{ id_producto: 1, cantidad: 5, precio_unitario: 1000, cantidad_retiro_inmediato: 5 }],
+        pagos: [{ id_cuenta: 1, monto: 5000 }],
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.documento.es_fiscal).toBe(true);
+    expect(res.body.documento.estado_afip).toBe('APROBADO');
+    expect(res.body.documento.cae).toBe('71234567891234');
+    expect(res.body.documento.cae_vencimiento).toBe('2026-08-05');
+    expect(wsfe.solicitarCae).toHaveBeenCalledTimes(1);
+    const [, , , detalle] = vi.mocked(wsfe.solicitarCae).mock.calls[0];
+    expect(detalle.cbteNro).toBe(11);
+  });
+
+  it('en modo INTERNA, la Venta Mixta nunca llama a AFIP', async () => {
+    const token = crearToken();
+
+    const res = await request(app)
+      .post('/api/ventas/facturar-mixta')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        cliente_id: 1,
+        items: [{ id_producto: 1, cantidad: 5, precio_unitario: 1000, cantidad_retiro_inmediato: 5 }],
+        pagos: [{ id_cuenta: 1, monto: 5000 }],
+        es_fiscal: false,
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.documento.es_fiscal).toBe(false);
+    expect(res.body.documento.estado_facturacion_interna).toBe('PENDIENTE');
+    expect(wsfe.consultarUltimoAutorizado).not.toHaveBeenCalled();
+    expect(wsfe.solicitarCae).not.toHaveBeenCalled();
+    expect(queryLog.some((q) => /comprobantes_afip/.test(q.sql))).toBe(false);
+  });
+
   it('despacha todo de inmediato cuando cantidad_retiro_inmediato cubre toda la cantidad', async () => {
     const token = crearToken();
 
