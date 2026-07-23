@@ -5,6 +5,7 @@ import { type ContextoAcceso, verificarAccesoSucursal } from '../utils/autorizac
 import { redondearMoneda } from '../utils/documento.utils';
 import { bloquearOrdenEntregaPorId, cumplirOrdenEntrega, obtenerDetallesOrdenEntrega } from './ordenesEntrega.service';
 import type {
+  ActualizarCotInput,
   AgregarOrdenAHojaInput,
   AnularHojaDeRutaInput,
   Camion,
@@ -20,7 +21,7 @@ type Queryable = Pool | PoolClient;
 const FECHA_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 const HOJA_DE_RUTA_COLUMNAS = `id_hoja_de_ruta, id_camion, chofer, fecha_despacho, estado, id_usuario_creo, fecha_creacion,
-  id_usuario_confirmo, fecha_confirmacion, motivo_anulacion, id_usuario_anulo, fecha_anulacion`;
+  id_usuario_confirmo, fecha_confirmacion, motivo_anulacion, id_usuario_anulo, fecha_anulacion, nro_cot`;
 
 async function obtenerOrdenesDeHoja(client: Queryable, id_hoja_de_ruta: number): Promise<HojaDeRutaOrden[]> {
   const { rows } = await client.query<{
@@ -192,13 +193,26 @@ export async function agregarOrdenAHoja(
       id_orden_entrega: number;
       id_documento: number;
       estado: string;
-    }>(`SELECT id_orden_entrega, id_documento, estado FROM ordenes_entrega WHERE nro_orden = $1 FOR UPDATE`, [input.nro_orden]);
+      tipo_entrega: string;
+    }>(`SELECT id_orden_entrega, id_documento, estado, tipo_entrega FROM ordenes_entrega WHERE nro_orden = $1 FOR UPDATE`, [
+      input.nro_orden,
+    ]);
     const orden = ordenRows[0];
     if (!orden) {
       throw AppError.notFound('ORDEN_ENTREGA_NO_ENCONTRADA', `No existe la orden de entrega ${input.nro_orden}`);
     }
     if (orden.estado !== 'PENDIENTE') {
       throw AppError.conflict('ORDEN_NO_DISPONIBLE', `La orden ${input.nro_orden} ya no está pendiente.`);
+    }
+    // Paradigma de la Pizarra de Camiones: un camión transporta mercadería
+    // física pendiente de ENVÍO, no facturas. Una orden de retiro en
+    // mostrador nunca sube a un viaje — primero hay que editarla a
+    // ENVIO_DOMICILIO (`editarTipoEntregaOrden`).
+    if (orden.tipo_entrega !== 'ENVIO_DOMICILIO') {
+      throw AppError.badRequest(
+        'ORDEN_NO_ES_ENVIO_DOMICILIO',
+        `La orden ${input.nro_orden} es de retiro en mostrador, no de envío a domicilio; no puede subirse a un camión.`,
+      );
     }
 
     const { rows: yaAsignadaRows } = await client.query<{ id_hoja_de_ruta: number }>(
@@ -361,6 +375,12 @@ export async function confirmarSalidaHojaDeRuta(id_hoja_de_ruta: number, context
     if (hoja.estado === 'ANULADA') {
       throw AppError.badRequest('HOJA_ANULADA', 'Esta hoja de ruta está anulada.');
     }
+    if (!hoja.nro_cot?.trim()) {
+      throw AppError.badRequest(
+        'COT_REQUERIDO',
+        'Esta hoja de ruta necesita un Código de Operación de Traslado (COT) cargado antes de confirmar la salida.',
+      );
+    }
 
     const { rows: relacionesRows } = await client.query<{ id_orden_entrega: number; id_sucursal_despacho: number }>(
       `SELECT id_orden_entrega, id_sucursal_despacho FROM hoja_de_ruta_ordenes WHERE id_hoja_de_ruta = $1`,
@@ -408,4 +428,38 @@ export async function confirmarSalidaHojaDeRuta(id_hoja_de_ruta: number, context
     );
     return conOrdenes(client, actualizadaRows[0]);
   });
+}
+
+/**
+ * Carga el Código de Operación de Traslado (COT, exigido por ARBA) del
+ * viaje completo — una Hoja de Ruta puede agrupar varias Órdenes de Entrega
+ * (varios remitos) en un mismo camión, así que el COT se carga una única
+ * vez por viaje, no por remito. Sólo mientras la hoja está en `BORRADOR`:
+ * `confirmarSalidaHojaDeRuta` exige que ya esté cargado antes de despachar.
+ * No afecta stock ni la asignación de órdenes, así que no hace falta
+ * transacción ni bloquear filas (mismo criterio que `actualizarCotEnvio`).
+ */
+export async function actualizarCotHojaDeRuta(id_hoja_de_ruta: number, input: ActualizarCotInput): Promise<HojaDeRuta> {
+  const nroCot = input.nro_cot?.trim() ?? '';
+  if (!nroCot) {
+    throw AppError.badRequest('PAYLOAD_INVALIDO', 'nro_cot es requerido.');
+  }
+
+  const { rows: hojaRows } = await pool.query<HojaDeRuta>(
+    `SELECT ${HOJA_DE_RUTA_COLUMNAS} FROM hojas_de_ruta WHERE id_hoja_de_ruta = $1`,
+    [id_hoja_de_ruta],
+  );
+  const hoja = hojaRows[0];
+  if (!hoja) {
+    throw AppError.notFound('HOJA_DE_RUTA_NO_ENCONTRADA', `No existe la hoja de ruta id_hoja_de_ruta=${id_hoja_de_ruta}`);
+  }
+  if (hoja.estado !== 'BORRADOR') {
+    throw AppError.badRequest('HOJA_NO_EDITABLE', 'El COT sólo se puede cargar mientras la hoja de ruta está en borrador.');
+  }
+
+  const { rows: actualizadaRows } = await pool.query<HojaDeRuta>(
+    `UPDATE hojas_de_ruta SET nro_cot = $1 WHERE id_hoja_de_ruta = $2 RETURNING ${HOJA_DE_RUTA_COLUMNAS}`,
+    [nroCot, id_hoja_de_ruta],
+  );
+  return conOrdenes(pool, actualizadaRows[0]);
 }

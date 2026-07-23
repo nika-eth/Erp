@@ -17,6 +17,7 @@ import {
 import type {
   AnularOrdenEntregaInput,
   Documento,
+  EditarTipoEntregaOrdenInput,
   ItemVentaMixtaInput,
   OrdenEntrega,
   OrdenEntregaDetalle,
@@ -494,6 +495,83 @@ export async function anularOrdenEntrega(
     );
     const actualizada = actualizadaRows[0];
     actualizada.detalles = detalles;
+    return actualizada;
+  });
+}
+
+/**
+ * Edita la intención de cumplimiento de una Orden de Entrega ya creada — el
+ * caso "flete pagado aparte": el cliente compró para retirar en mostrador
+ * y luego decide que se lo lleven; el cajero factura el flete y edita la
+ * orden a `ENVIO_DOMICILIO` con su dirección y fecha. Al guardar, la orden
+ * aparece automáticamente en el backlog de la Pizarra de Camiones — es la
+ * misma consulta que ya filtra por `tipo_entrega`, no hace falta tocar
+ * nada más. Restringido a la sucursal de origen para VENDEDOR (mismo
+ * criterio que `anularOrdenEntrega`); ADMIN/SUPERVISOR sin restricción.
+ *
+ * Sólo aplica a órdenes `PENDIENTE`: una vez retirada o anulada, la
+ * intención de cumplimiento ya no tiene sentido. Tampoco se puede editar
+ * una orden que ya está cargada en un viaje activo (Hoja de Ruta no
+ * anulada) — hay que sacarla del viaje primero (`quitarOrdenDeHoja`), para
+ * no dejar un camión transportando algo que pasó a ser retiro en mostrador.
+ */
+export async function editarTipoEntregaOrden(
+  nro_orden: string,
+  input: EditarTipoEntregaOrdenInput,
+  contexto: ContextoRemito,
+): Promise<OrdenEntrega> {
+  if (input.tipo_entrega !== 'RETIRO_CLIENTE' && input.tipo_entrega !== 'ENVIO_DOMICILIO') {
+    throw AppError.badRequest('PAYLOAD_INVALIDO', 'tipo_entrega debe ser RETIRO_CLIENTE o ENVIO_DOMICILIO.');
+  }
+  const esEnvio = input.tipo_entrega === 'ENVIO_DOMICILIO';
+  if (esEnvio) {
+    if (!input.direccion_envio?.trim()) {
+      throw AppError.badRequest('PAYLOAD_INVALIDO', 'direccion_envio es requerida para un envío a domicilio.');
+    }
+    if (!FECHA_REGEX.test(input.fecha_pactada_envio ?? '')) {
+      throw AppError.badRequest('PAYLOAD_INVALIDO', 'fecha_pactada_envio es requerida con formato YYYY-MM-DD.');
+    }
+  }
+
+  return withTransaction(async (client) => {
+    const { rows: ordenRows } = await client.query<OrdenEntrega>(
+      `SELECT ${ORDEN_ENTREGA_COLUMNAS} FROM ordenes_entrega WHERE nro_orden = $1 FOR UPDATE`,
+      [nro_orden],
+    );
+    const orden = ordenRows[0];
+    if (!orden) {
+      throw AppError.notFound('ORDEN_ENTREGA_NO_ENCONTRADA', `No existe la orden de entrega ${nro_orden}`);
+    }
+    if (orden.estado !== 'PENDIENTE') {
+      throw AppError.badRequest(
+        'ORDEN_NO_EDITABLE',
+        'Sólo se puede editar la intención de entrega de una orden pendiente.',
+      );
+    }
+
+    verificarAccesoSucursal(contexto, orden.id_sucursal_origen);
+
+    const { rows: enViajeRows } = await client.query<{ id_hoja_de_ruta: number }>(
+      `SELECT hro.id_hoja_de_ruta FROM hoja_de_ruta_ordenes hro
+       JOIN hojas_de_ruta hr ON hr.id_hoja_de_ruta = hro.id_hoja_de_ruta
+       WHERE hro.id_orden_entrega = $1 AND hr.estado != 'ANULADA'`,
+      [orden.id_orden_entrega],
+    );
+    if (enViajeRows[0]) {
+      throw AppError.conflict(
+        'ORDEN_ASIGNADA_A_HOJA',
+        `La orden ${nro_orden} ya está cargada en una hoja de ruta; sacala del viaje antes de cambiar su intención de entrega.`,
+      );
+    }
+
+    const { rows: actualizadaRows } = await client.query<OrdenEntrega>(
+      `UPDATE ordenes_entrega SET tipo_entrega = $1, direccion_envio = $2, fecha_pactada_envio = $3
+       WHERE id_orden_entrega = $4
+       RETURNING ${ORDEN_ENTREGA_COLUMNAS}`,
+      [input.tipo_entrega, esEnvio ? input.direccion_envio!.trim() : null, esEnvio ? input.fecha_pactada_envio : null, orden.id_orden_entrega],
+    );
+    const actualizada = actualizadaRows[0];
+    actualizada.detalles = await obtenerDetallesOrdenEntrega(client, orden.id_orden_entrega);
     return actualizada;
   });
 }

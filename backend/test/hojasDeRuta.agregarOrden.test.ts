@@ -22,7 +22,7 @@ const HOJA = {
 };
 
 const CAMION = { id_camion: 1, patente: 'AB123CD', chofer: 'Carlos Gomez', capacidad_casilleros: 10, capacidad_kilos_max: '5000.00' };
-const ORDEN = { id_orden_entrega: 20, id_documento: 50, estado: 'PENDIENTE' };
+const ORDEN = { id_orden_entrega: 20, id_documento: 50, estado: 'PENDIENTE', tipo_entrega: 'ENVIO_DOMICILIO' };
 const ZONA = { id_zona: 1, nombre: 'Zona Cercana', casilleros_requeridos: 1 };
 
 function crearHandler(opts: {
@@ -116,6 +116,16 @@ describe('POST /api/hojas-de-ruta/:id/ordenes', () => {
 
     expect(res.status).toBe(409);
     expect(res.body.error).toBe('ORDEN_NO_DISPONIBLE');
+  });
+
+  it('rechaza con 400 si la orden es de retiro en mostrador (no de envío a domicilio)', async () => {
+    setQueryHandler(crearHandler({ orden: { ...ORDEN, tipo_entrega: 'RETIRO_CLIENTE' } }));
+    const token = crearToken({ id_sucursal: 1 });
+
+    const res = await request(app).post('/api/hojas-de-ruta/5/ordenes').set('Authorization', `Bearer ${token}`).send(PAYLOAD_VALIDO);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('ORDEN_NO_ES_ENVIO_DOMICILIO');
   });
 
   it('rechaza con 409 si la orden ya está asignada a otro viaje', async () => {

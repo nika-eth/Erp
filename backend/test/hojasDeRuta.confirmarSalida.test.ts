@@ -19,6 +19,7 @@ const HOJA = {
   motivo_anulacion: null,
   id_usuario_anulo: null,
   fecha_anulacion: null,
+  nro_cot: 'COT-2026-000123' as string | null,
 };
 
 // Orden A: origen sucursal 1, despacho cruzado a sucursal 2.
@@ -185,6 +186,16 @@ describe('POST /api/hojas-de-ruta/:id/confirmar-salida', () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('HOJA_ANULADA');
+  });
+
+  it('rechaza con 400 si la hoja no tiene COT cargado', async () => {
+    setQueryHandler(crearHandler({ hoja: { ...HOJA, nro_cot: null } }));
+    const token = crearToken();
+
+    const res = await request(app).post('/api/hojas-de-ruta/5/confirmar-salida').set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('COT_REQUERIDO');
   });
 
   it('rechaza con 401 sin token de sesión', async () => {
