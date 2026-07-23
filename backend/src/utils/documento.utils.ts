@@ -67,19 +67,59 @@ export const ETIQUETA_TIPO_DOCUMENTO: Record<TipoDocumento, string> = {
 };
 
 /**
- * Columnas base de `documentos` (sin `items`: ahora vive en
- * `documentos_detalles`, ver `sql/009_documentos_detalles.sql`). Sirve tal
- * cual en `INSERT/UPDATE ... RETURNING` sin alias — ahí `items` se adjunta
- * en JS con el array ya calculado en memoria (`ventas.service.ts`), no hace
- * falta reconsultarlo. Para un SELECT que sí necesita traer `items` desde
- * cero (lecturas en `documentos.service.ts`), combinar con
- * `subconsultaItems(alias)`.
+ * Columnas propias de `documentos` (sin `items`: ahora vive en
+ * `documentos_detalles`, ver `sql/009_documentos_detalles.sql`; sin los
+ * metadatos de comprobante fiscal/interno: viven en tablas satélite, ver
+ * `joinComprobantes` más abajo). Sirve tal cual en `INSERT/UPDATE ...
+ * RETURNING` sin alias — un `INSERT/UPDATE` nunca puede `RETURNING` columnas
+ * de otra tabla, por eso el resultado de emitir el comprobante (CAE, estado,
+ * etc.) se fusiona en JS después de llamar al `EmisorComprobante` que
+ * corresponda (ver `services/emision/`), no viaja en este mismo `RETURNING`.
  */
-export const DOCUMENTO_COLUMNAS = `
+export const DOCUMENTO_COLUMNAS_BASE = `
   id_documento, id_sucursal_origen, nro_remito, fecha, cliente_id, total_neto, tipo_documento, id_zona,
-  es_fiscal, tipo_comprobante, punto_venta, nro_comprobante_afip, cae, cae_vencimiento, estado_afip, error_afip_mensaje,
-  id_documento_origen_ci, estado_facturacion_interna, estado_despacho
+  es_fiscal, id_documento_origen_ci, estado_despacho
 `;
+
+/**
+ * Igual que `DOCUMENTO_COLUMNAS_BASE`, pero con cada columna calificada por
+ * `alias` — imprescindible en un SELECT que además haga JOIN con
+ * `comprobantes_afip`/`comprobantes_internos` (ver `joinComprobantes`): esas
+ * dos satélite también tienen `id_documento`, así que sin calificar el
+ * nombre queda ambiguo para Postgres (`column reference "id_documento" is
+ * ambiguous`). En un `INSERT/UPDATE ... RETURNING` (sin JOIN posible) no
+ * hace falta esto — ahí se usa `DOCUMENTO_COLUMNAS_BASE` tal cual.
+ */
+export function documentoColumnasBase(alias: string): string {
+  return `
+    ${alias}.id_documento, ${alias}.id_sucursal_origen, ${alias}.nro_remito, ${alias}.fecha, ${alias}.cliente_id,
+    ${alias}.total_neto, ${alias}.tipo_documento, ${alias}.id_zona, ${alias}.es_fiscal, ${alias}.id_documento_origen_ci,
+    ${alias}.estado_despacho
+  `;
+}
+
+/**
+ * Fragmento de columnas + JOIN para incorporar los metadatos de comprobante
+ * (fiscal o interno) a un SELECT sobre `documentos` — sólo lecturas, nunca
+ * `RETURNING` de un INSERT/UPDATE (ver comentario de `DOCUMENTO_COLUMNAS_BASE`).
+ * `alias` es el alias de `documentos` en el `FROM` (ej. `d`). Un documento
+ * sólo tiene fila en UNA de las dos satélite (según `es_fiscal`), por eso el
+ * `LEFT JOIN`: la que no aplica siempre sale `NULL`, igual que las columnas
+ * nullable que existían antes en `documentos`.
+ */
+export function joinComprobantes(alias: string): { columnas: string; join: string } {
+  return {
+    columnas: `
+      ca.tipo_comprobante, ca.punto_venta, ca.nro_comprobante_afip, ca.cae, ca.cae_vencimiento,
+      ca.estado_afip, ca.error_afip_mensaje,
+      ci.estado_facturacion_interna
+    `,
+    join: `
+      LEFT JOIN comprobantes_afip ca ON ca.id_documento = ${alias}.id_documento
+      LEFT JOIN comprobantes_internos ci ON ci.id_documento = ${alias}.id_documento
+    `,
+  };
+}
 
 /**
  * Subconsulta que arma `items` como un array JSON agregando

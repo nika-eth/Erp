@@ -184,8 +184,6 @@ export interface FacturarVentaInput {
   items: ItemInput[];
   total_neto: number;
   pagos: PagoInput[];
-  /** F5 (fiscal, default) vs F6 (interno) en Rendición de Pago. */
-  es_fiscal?: boolean;
 }
 
 export interface FacturarVentaResult {

@@ -5,6 +5,7 @@ import { guardarPresupuesto as guardarPresupuestoApi } from '../../../api/ventas
 import { Comprobante, type ComprobanteProps } from '../../common/Comprobante';
 import { EstadoFiscalBadge } from '../../common/EstadoFiscalBadge';
 import { useAuth } from '../../../context/AuthContext';
+import { ModoOperacionProvider, useModoOperacion } from '../../../context/ModoOperacionContext';
 import { useGlobalHotkeys } from '../../../hooks/useGlobalHotkeys';
 import type { Cliente, Documento, ItemCarrito, ResultadoRendicion, TipoDocumento } from '../../../types/domain';
 import { CatalogoProductos } from './CatalogoProductos';
@@ -36,8 +37,24 @@ function aItemInput(item: ItemCarrito): { id_producto: number; cantidad: number;
   };
 }
 
+/**
+ * `ModoOperacionProvider` se monta acá (no en `App.tsx`): el modo
+ * FISCAL/INTERNA es un concepto de Carga Unificada, no de toda la app, y
+ * así se resetea a FISCAL cada vez que se vuelve a entrar al módulo desde
+ * cero (aunque `sessionStorage` lo recuerde dentro de la misma pestaña).
+ */
 export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Element {
+  return (
+    <ModoOperacionProvider>
+      <CargaUnificadaInterna onSalir={onSalir} />
+    </ModoOperacionProvider>
+  );
+}
+
+function CargaUnificadaInterna({ onSalir }: { onSalir: () => void }): JSX.Element {
   const { sucursal } = useAuth();
+  const { modo, toggle } = useModoOperacion();
+  const esInterna = modo === 'INTERNA';
   const [cuitDniInput, setCuitDniInput] = useState('');
   const [cliente, setCliente] = useState<Cliente | null>(null);
   const [tipoDocumento, setTipoDocumento] = useState<TipoDocumento | null>(null);
@@ -189,9 +206,12 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
         setCatalogoAbierto(true);
       },
       F2: () => void guardarPresupuesto(),
+      F4: () => {
+        if (!rendicionAbierta) toggle();
+      },
       F12: () => {
         if (!cliente || items.length === 0) {
-          setError('Cargá cliente e ítems antes de facturar (F12).');
+          setError(`Cargá cliente e ítems antes de ${esInterna ? 'emitir el comprobante' : 'facturar'} (F12).`);
           return;
         }
         if (!rendicionAbierta) setRendicionAbierta(true);
@@ -225,7 +245,31 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
   );
 
   return (
-    <div className="flex h-full flex-col gap-4 overflow-y-auto bg-white p-6">
+    <div className={`flex h-full flex-col gap-4 overflow-y-auto p-6 ${esInterna ? 'bg-fuchsia-50' : 'bg-white'}`}>
+      <div
+        className={`flex items-center justify-between rounded-lg border px-4 py-2 ${
+          esInterna ? 'border-fuchsia-300 bg-fuchsia-100' : 'border-neutral-200 bg-neutral-50'
+        }`}
+      >
+        <span className={`text-sm font-semibold ${esInterna ? 'text-fuchsia-900' : 'text-neutral-600'}`}>
+          Modo de operación: {esInterna ? 'INTERNA (Remito X, sin AFIP)' : 'FISCAL (AFIP)'}
+        </span>
+        <button
+          type="button"
+          tabIndex={-1}
+          onClick={() => {
+            if (!rendicionAbierta) toggle();
+          }}
+          className={`rounded px-3 py-1.5 text-xs font-medium ${
+            esInterna
+              ? 'bg-fuchsia-600 text-white hover:bg-fuchsia-700'
+              : 'bg-neutral-200 text-neutral-700 hover:bg-neutral-300'
+          }`}
+        >
+          Cambiar a {esInterna ? 'Fiscal' : 'Interna'} (F4)
+        </button>
+      </div>
+
       <div className="flex items-end gap-4">
         <label className="block w-64 text-sm">
           <span className="mb-1 block text-neutral-600">CUIT / DNI del cliente</span>
@@ -322,7 +366,8 @@ export function CargaUnificada({ onSalir }: { onSalir: () => void }): JSX.Elemen
 
       <div className="flex items-center justify-between">
         <div className="text-xs text-neutral-400">
-          F1 catálogo · F2 presupuesto · F12 facturar (pago mixto) · Backspace quita el último ítem · Esc cancelar
+          F1 catálogo · F2 presupuesto · F4 cambiar modo · F12 {esInterna ? 'emitir comprobante' : 'facturar'} (pago mixto) · Backspace
+          quita el último ítem · Esc cancelar
         </div>
         <div className="text-lg font-semibold text-neutral-900">
           Total: <span className="font-mono">${total.toFixed(2)}</span>

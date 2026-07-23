@@ -1,7 +1,7 @@
 import { pool } from '../config/db';
 import { AppError } from '../utils/AppError';
 import { type ContextoAcceso, verificarAccesoSucursal } from '../utils/autorizacion.utils';
-import { DOCUMENTO_COLUMNAS, subconsultaItems } from '../utils/documento.utils';
+import { documentoColumnasBase, joinComprobantes, subconsultaItems } from '../utils/documento.utils';
 import type { Documento, TipoDocumento } from '../types/domain';
 
 export interface FiltroHistorial {
@@ -47,17 +47,18 @@ export async function buscarDocumentos(filtro: FiltroHistorial): Promise<Documen
   const where = condiciones.length > 0 ? `WHERE ${condiciones.join(' AND ')}` : '';
   valores.push(Math.min(filtro.limit ?? 50, 200));
 
+  const { columnas: columnasComprobante, join: joinComprobante } = joinComprobantes('d');
   const { rows } = await pool.query<Documento & { cliente_nombre: string; sucursal_nombre: string }>(
     `SELECT
        d.id_documento, d.id_sucursal_origen, d.nro_remito, d.fecha, d.cliente_id,
        d.total_neto, d.tipo_documento, d.id_zona, d.es_fiscal,
-       d.tipo_comprobante, d.punto_venta, d.nro_comprobante_afip, d.cae, d.cae_vencimiento,
-       d.estado_afip, d.error_afip_mensaje,
-       d.id_documento_origen_ci, d.estado_facturacion_interna, d.estado_despacho,
+       ${columnasComprobante},
+       d.id_documento_origen_ci, d.estado_despacho,
        ${subconsultaItems('d')},
        c.nombre AS cliente_nombre,
        s.nombre AS sucursal_nombre
      FROM documentos d
+     ${joinComprobante}
      JOIN clientes c ON c.id_cliente = d.cliente_id
      JOIN sucursales s ON s.id_sucursal = d.id_sucursal_origen
      ${where}
@@ -69,8 +70,12 @@ export async function buscarDocumentos(filtro: FiltroHistorial): Promise<Documen
 }
 
 export async function obtenerDocumentoPorId(id_documento: number, contexto: ContextoAcceso): Promise<Documento> {
+  const { columnas: columnasComprobante, join: joinComprobante } = joinComprobantes('documentos');
   const { rows } = await pool.query<Documento>(
-    `SELECT ${DOCUMENTO_COLUMNAS}, ${subconsultaItems('documentos')} FROM documentos WHERE id_documento = $1`,
+    `SELECT ${documentoColumnasBase('documentos')}, ${columnasComprobante}, ${subconsultaItems('documentos')}
+     FROM documentos
+     ${joinComprobante}
+     WHERE documentos.id_documento = $1`,
     [id_documento],
   );
   const documento = rows[0];

@@ -36,22 +36,22 @@ function handlerConEstado() {
 
   const handler = (sql: string, params: unknown[]): MockQueryResult => {
     if (/pg_advisory_xact_lock/.test(sql)) return { rows: [] };
-    if (/UPDATE documentos SET nro_comprobante_afip/.test(sql)) {
+    if (/UPDATE comprobantes_afip SET nro_comprobante_afip/.test(sql)) {
       estadoDocumento.nro_comprobante_afip = params[0];
       return { rows: [] };
     }
-    if (/UPDATE documentos SET cae = \$1/.test(sql)) {
+    if (/UPDATE comprobantes_afip SET cae = \$1/.test(sql)) {
       estadoDocumento.cae = params[0];
       estadoDocumento.cae_vencimiento = params[1];
       estadoDocumento.estado_afip = 'APROBADO';
       return { rows: [] };
     }
-    if (/UPDATE documentos SET estado_afip = 'RECHAZADO'/.test(sql)) {
+    if (/UPDATE comprobantes_afip SET estado_afip = 'RECHAZADO'/.test(sql)) {
       estadoDocumento.estado_afip = 'RECHAZADO';
       estadoDocumento.error_afip_mensaje = params[0];
       return { rows: [] };
     }
-    if (/UPDATE documentos SET error_afip_mensaje/.test(sql)) {
+    if (/UPDATE comprobantes_afip SET error_afip_mensaje/.test(sql)) {
       estadoDocumento.error_afip_mensaje = params[0];
       return { rows: [] };
     }

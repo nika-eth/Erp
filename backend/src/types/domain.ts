@@ -229,8 +229,6 @@ export interface FacturarVentaInput {
   items: ItemInput[];
   total_neto: number;
   pagos: PagoInput[];
-  /** Elegido por el vendedor en Rendición de Pago (F5 fiscal / F6 interno). Default `true` si no viene. */
-  es_fiscal?: boolean;
 }
 
 export interface FacturarVentaResult {

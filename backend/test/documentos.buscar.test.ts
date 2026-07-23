@@ -33,10 +33,10 @@ function crearHandler(opts: { documento?: typeof DOCUMENTO | null }) {
   const { documento = DOCUMENTO } = opts;
 
   return (sql: string, params: unknown[]): MockQueryResult => {
-    if (/FROM documentos WHERE id_documento = \$1/.test(sql)) {
+    if (/WHERE documentos\.id_documento = \$1/.test(sql)) {
       return { rows: documento ? [documento] : [] };
     }
-    if (/FROM documentos d\s+JOIN clientes c/.test(sql)) {
+    if (/FROM documentos d[\s\S]*JOIN clientes c/.test(sql)) {
       // Filtra localmente por id_sucursal_origen si el WHERE lo incluyó, para
       // simular el comportamiento real de la query parametrizada.
       const idSucursalParam = params.find((p) => typeof p === 'number' && sql.includes('id_sucursal_origen'));

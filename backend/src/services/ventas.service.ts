@@ -1,24 +1,19 @@
 import type { PoolClient } from 'pg';
-import { calcularNetoEIva, solicitarCaeParaDocumento } from '../afip/afip.service';
-import { encolarContingencia } from '../afip/cola.repository';
-import { docTipoAfip, TIPO_COMPROBANTE_AFIP, TIPO_COMPROBANTE_REMITO_INTERNO } from '../afip/types';
-import { env } from '../config/env';
 import { pool, withTransaction } from '../config/db';
 import { AppError } from '../utils/AppError';
-import {
-  DOCUMENTO_COLUMNAS,
-  ETIQUETA_TIPO_DOCUMENTO,
-  redondearMoneda,
-  resolverCantidadUnidades,
-} from '../utils/documento.utils';
+import { DOCUMENTO_COLUMNAS_BASE, ETIQUETA_TIPO_DOCUMENTO, redondearMoneda, resolverCantidadUnidades } from '../utils/documento.utils';
 import { tipoDocumentoVentaPorCliente } from '../utils/identificacion.utils';
 import { type ContextoAcceso, verificarAccesoSucursal } from '../utils/autorizacion.utils';
 import { buscarClientePorId } from './clientes.service';
+import { obtenerComprobanteInterno, marcarComprobanteInternoFacturado } from './emision/comprobantesInternos.repository';
+import { emisorFiscalAfip } from './emision/emisorFiscalAfip';
+import { emisorInterno } from './emision/emisorInterno';
+import type { EmisorComprobante } from './emision/emisorComprobante';
 import { crearRemitosRegularizacion, recalcularEstadoDespacho } from './remitos.service';
 import type {
+  Cliente,
   CuentaEmpresa,
   Documento,
-  EstadoAfip,
   FacturarComprobanteInternoResult,
   FacturarVentaInput,
   FacturarVentaResult,
@@ -163,9 +158,22 @@ export interface SupervisorAutorizacion {
   nombreSupervisor: string;
 }
 
+interface NucleoVentaResult {
+  documento: Documento;
+  movimientos: MovimientoCuentaCorriente[];
+  montoExcedido: number;
+  cliente: Cliente;
+  tipoDocumento: Extract<TipoDocumento, 'FACTURA_A' | 'FACTURA_B'>;
+  totalNeto: number;
+  totalPagos: number;
+}
+
 /**
- * Procesa una venta completa: cabecera del documento + desglose de pago
- * mixto en cuenta_corriente, dentro de una única transacción.
+ * Parte agnóstica de una venta: cabecera del documento + desglose de pago
+ * mixto en cuenta_corriente. Ni sabe ni le importa si el comprobante
+ * resultante va a ser Fiscal o Interno — eso lo decide el `EmisorComprobante`
+ * que invoque cada wrapper de más abajo (`facturarVentaFiscal` /
+ * `emitirVentaInterna`), después de que esta función retorna.
  *
  * Orden de operaciones (importa para que los triggers de Postgres se
  * disparen correctamente):
@@ -185,16 +193,23 @@ export interface SupervisorAutorizacion {
  *   4. INSERT de un HABER en `cuenta_corriente` por cada medio de pago
  *      cargado por el vendedor.
  */
-export async function facturarVenta(
+async function crearVentaSinEmitir(
+  client: PoolClient,
   contexto: ContextoFacturacion,
   input: FacturarVentaInput,
+  esFiscal: boolean,
   supervisorAutorizacion?: SupervisorAutorizacion | null,
-): Promise<FacturarVentaResult> {
-  validarPayload(input);
+): Promise<NucleoVentaResult> {
+  if (supervisorAutorizacion) {
+    await client.query(`SET LOCAL app.allow_credit_override = 'true'`);
+  }
 
-  const cliente = await buscarClientePorId(input.cliente_id);
-  const tipo_documento = tipoDocumentoVentaPorCliente(cliente.tipo_documento);
-  const productos = await obtenerProductos(input.items.map((i) => i.id_producto));
+  const cliente = await buscarClientePorId(input.cliente_id, client);
+  const tipoDocumento = tipoDocumentoVentaPorCliente(cliente.tipo_documento);
+  const productos = await obtenerProductos(
+    input.items.map((i) => i.id_producto),
+    client,
+  );
   const { items, totalNeto } = calcularItems(input.items, productos);
 
   const totalPagos = redondearMoneda(input.pagos.reduce((acc, p) => acc + p.monto, 0));
@@ -205,146 +220,116 @@ export async function facturarVenta(
     );
   }
 
-  return withTransaction(async (client) => {
-    if (supervisorAutorizacion) {
-      await client.query(`SET LOCAL app.allow_credit_override = 'true'`);
-    }
+  const cuentasEmpresa = await obtenerCuentasEmpresa(
+    input.pagos.map((p) => p.id_cuenta),
+    client,
+  );
 
-    const cuentasEmpresa = await obtenerCuentasEmpresa(
-      input.pagos.map((p) => p.id_cuenta),
-      client,
+  const { rows: documentoRows } = await client.query<Documento>(
+    `INSERT INTO documentos (id_sucursal_origen, fecha, cliente_id, total_neto, tipo_documento, id_zona, es_fiscal)
+     VALUES ($1, NOW(), $2, $3, $4, $5, $6)
+     RETURNING ${DOCUMENTO_COLUMNAS_BASE}`,
+    [contexto.id_sucursal, input.cliente_id, totalNeto, tipoDocumento, cliente.id_zona, esFiscal],
+  );
+  const documento: Documento = { ...documentoRows[0], items };
+  await insertarDetalles(client, documento.id_documento, items);
+
+  let montoExcedido = 0;
+  if (supervisorAutorizacion) {
+    const { rows: saldoRows } = await client.query<{ saldo: string }>(
+      `SELECT COALESCE(SUM(debe) - SUM(haber), 0) AS saldo FROM cuenta_corriente WHERE cliente_id = $1`,
+      [input.cliente_id],
     );
+    const saldoActual = Number(saldoRows[0].saldo);
+    montoExcedido = redondearMoneda(Math.max(0, saldoActual + totalNeto - Number(cliente.limite_credito)));
+  }
 
-    // Elegido por el vendedor en Rendición de Pago (F5 fiscal / F6 interno,
-    // ver RendicionPago.tsx). `es_fiscal: false` NUNCA toca AFIP: se resuelve
-    // por completo acá adentro, sin cola de contingencia.
-    const esFiscal = input.es_fiscal !== false;
-    const tipoComprobante = esFiscal ? TIPO_COMPROBANTE_AFIP[tipo_documento] : TIPO_COMPROBANTE_REMITO_INTERNO;
-    const puntoVentaDocumento = esFiscal ? env.afip.puntoVenta : env.afip.puntoVentaInterno;
-    const estadoAfipInicial: EstadoAfip = esFiscal ? 'PENDIENTE' : 'APROBADO_INTERNO';
+  const movimientos: MovimientoCuentaCorriente[] = [];
 
-    const { rows: documentoRows } = await client.query<Documento>(
-      `INSERT INTO documentos (id_sucursal_origen, fecha, cliente_id, total_neto, tipo_documento, id_zona, es_fiscal, tipo_comprobante, punto_venta, estado_afip, estado_facturacion_interna)
-       VALUES ($1, NOW(), $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       RETURNING ${DOCUMENTO_COLUMNAS}`,
-      [
-        contexto.id_sucursal,
-        input.cliente_id,
-        totalNeto,
-        tipo_documento,
-        cliente.id_zona,
-        esFiscal,
-        tipoComprobante,
-        puntoVentaDocumento,
-        estadoAfipInicial,
-        esFiscal ? null : 'PENDIENTE',
-      ],
+  const { rows: debeRows } = await client.query<MovimientoCuentaCorriente>(
+    `INSERT INTO cuenta_corriente (cliente_id, fecha, debe, haber, id_documento, concepto)
+     VALUES ($1, NOW(), $2, 0, $3, $4)
+     RETURNING id_movimiento, cliente_id, fecha, debe, haber, id_documento, id_cuenta, id_recibo, concepto`,
+    [input.cliente_id, totalNeto, documento.id_documento, `Venta ${ETIQUETA_TIPO_DOCUMENTO[tipoDocumento]} - Remito ${documento.nro_remito}`],
+  );
+  movimientos.push(debeRows[0]);
+
+  if (supervisorAutorizacion) {
+    await client.query(
+      `INSERT INTO auditoria_autorizaciones (id_usuario_vendedor, id_supervisor, id_cliente, monto_excedido, fecha)
+       VALUES ($1, $2, $3, $4, NOW())`,
+      [contexto.id_usuario, supervisorAutorizacion.id_supervisor, input.cliente_id, montoExcedido],
     );
-    let documento: Documento = { ...documentoRows[0], items };
-    await insertarDetalles(client, documento.id_documento, items);
+  }
 
-    let montoExcedido = 0;
-    if (supervisorAutorizacion) {
-      const { rows: saldoRows } = await client.query<{ saldo: string }>(
-        `SELECT COALESCE(SUM(debe) - SUM(haber), 0) AS saldo FROM cuenta_corriente WHERE cliente_id = $1`,
-        [input.cliente_id],
-      );
-      const saldoActual = Number(saldoRows[0].saldo);
-      montoExcedido = redondearMoneda(Math.max(0, saldoActual + totalNeto - Number(cliente.limite_credito)));
-    }
-
-    const movimientos: MovimientoCuentaCorriente[] = [];
-
-    const { rows: debeRows } = await client.query<MovimientoCuentaCorriente>(
-      `INSERT INTO cuenta_corriente (cliente_id, fecha, debe, haber, id_documento, concepto)
-       VALUES ($1, NOW(), $2, 0, $3, $4)
+  for (const pago of input.pagos) {
+    const cuenta = cuentasEmpresa.get(pago.id_cuenta)!;
+    const { rows: haberRows } = await client.query<MovimientoCuentaCorriente>(
+      `INSERT INTO cuenta_corriente (cliente_id, fecha, debe, haber, id_documento, id_cuenta, concepto)
+       VALUES ($1, NOW(), 0, $2, $3, $4, $5)
        RETURNING id_movimiento, cliente_id, fecha, debe, haber, id_documento, id_cuenta, id_recibo, concepto`,
-      [
-        input.cliente_id,
-        totalNeto,
-        documento.id_documento,
-        `Venta ${ETIQUETA_TIPO_DOCUMENTO[tipo_documento]} - Remito ${documento.nro_remito}`,
-      ],
+      [input.cliente_id, pago.monto, documento.id_documento, pago.id_cuenta, `Pago ${cuenta.nombre_cuenta} - Remito ${documento.nro_remito}`],
     );
-    movimientos.push(debeRows[0]);
+    movimientos.push(haberRows[0]);
+  }
 
-    if (supervisorAutorizacion) {
-      await client.query(
-        `INSERT INTO auditoria_autorizaciones (id_usuario_vendedor, id_supervisor, id_cliente, monto_excedido, fecha)
-         VALUES ($1, $2, $3, $4, NOW())`,
-        [contexto.id_usuario, supervisorAutorizacion.id_supervisor, input.cliente_id, montoExcedido],
-      );
-    }
+  return { documento, movimientos, montoExcedido, cliente, tipoDocumento, totalNeto, totalPagos };
+}
 
-    for (const pago of input.pagos) {
-      const cuenta = cuentasEmpresa.get(pago.id_cuenta)!;
-      const { rows: haberRows } = await client.query<MovimientoCuentaCorriente>(
-        `INSERT INTO cuenta_corriente (cliente_id, fecha, debe, haber, id_documento, id_cuenta, concepto)
-         VALUES ($1, NOW(), 0, $2, $3, $4, $5)
-         RETURNING id_movimiento, cliente_id, fecha, debe, haber, id_documento, id_cuenta, id_recibo, concepto`,
-        [
-          input.cliente_id,
-          pago.monto,
-          documento.id_documento,
-          pago.id_cuenta,
-          `Pago ${cuenta.nombre_cuenta} - Remito ${documento.nro_remito}`,
-        ],
-      );
-      movimientos.push(haberRows[0]);
-    }
+async function facturar(
+  contexto: ContextoFacturacion,
+  input: FacturarVentaInput,
+  esFiscal: boolean,
+  emisor: EmisorComprobante,
+  supervisorAutorizacion?: SupervisorAutorizacion | null,
+): Promise<FacturarVentaResult> {
+  validarPayload(input);
 
-    // Intento de facturación electrónica (AFIP WSFE) — SÓLO para ventas
-    // fiscales. Deliberadamente DESPUÉS de que la venta ya está armada en
-    // esta misma transacción, y ANTES del COMMIT: si AFIP falla, la venta
-    // igual se confirma (queda en CONTINGENCIA); `solicitarCaeParaDocumento`
-    // nunca lanza, así que esto jamás puede hacer abortar la transacción de
-    // venta. Ver `src/afip/afip.service.ts` para el detalle del contrato.
-    // Una venta interna (`esFiscal = false`) ya quedó resuelta en el INSERT
-    // de arriba (`estado_afip = 'APROBADO_INTERNO'`): no hay nada más que
-    // hacer acá.
-    if (esFiscal) {
-      const { neto, iva } = calcularNetoEIva(totalNeto);
-      const resultadoAfip = await solicitarCaeParaDocumento(client, {
-        id_documento: documento.id_documento,
-        puntoVenta: puntoVentaDocumento,
-        tipoComprobante,
-        docTipo: docTipoAfip(cliente.tipo_documento),
-        docNro: cliente.numero_documento,
-        importeTotal: totalNeto,
-        importeNeto: neto,
-        importeIva: iva,
-        nroComprobanteAfipPrevio: null,
-      });
+  return withTransaction(async (client) => {
+    const nucleo = await crearVentaSinEmitir(client, contexto, input, esFiscal, supervisorAutorizacion);
 
-      if (resultadoAfip.ok) {
-        const { rows } = await client.query<Documento>(
-          `UPDATE documentos SET cae = $1, cae_vencimiento = $2, estado_afip = 'APROBADO'
-           WHERE id_documento = $3 RETURNING ${DOCUMENTO_COLUMNAS}`,
-          [resultadoAfip.cae, resultadoAfip.caeVencimiento, documento.id_documento],
-        );
-        documento = { ...rows[0], items };
-      } else {
-        const { rows } = await client.query<Documento>(
-          `UPDATE documentos SET estado_afip = $1, error_afip_mensaje = $2
-           WHERE id_documento = $3 RETURNING ${DOCUMENTO_COLUMNAS}`,
-          [resultadoAfip.tipo, resultadoAfip.mensaje, documento.id_documento],
-        );
-        documento = { ...rows[0], items };
-        if (resultadoAfip.tipo === 'CONTINGENCIA') {
-          await encolarContingencia(client, documento.id_documento);
-        }
-      }
-    }
+    const resultadoEmision = await emisor.emitir(client, {
+      id_documento: nucleo.documento.id_documento,
+      nro_remito: nucleo.documento.nro_remito,
+      tipo_documento: nucleo.tipoDocumento,
+      total_neto: nucleo.totalNeto,
+      cliente: nucleo.cliente,
+    });
+    const documento: Documento = { ...nucleo.documento, ...resultadoEmision };
 
     return {
       documento,
-      saldo_pendiente: redondearMoneda(totalNeto - totalPagos),
-      movimientos,
+      saldo_pendiente: redondearMoneda(nucleo.totalNeto - nucleo.totalPagos),
+      movimientos: nucleo.movimientos,
       autorizacion: supervisorAutorizacion
-        ? { supervisor: supervisorAutorizacion.nombreSupervisor, monto_excedido: montoExcedido }
+        ? { supervisor: supervisorAutorizacion.nombreSupervisor, monto_excedido: nucleo.montoExcedido }
         : undefined,
     };
   });
+}
+
+/**
+ * POST /api/ventas/facturar-fiscal — Operación FISCAL: pide CAE a AFIP
+ * (`emisorFiscalAfip`, único punto que habla con el Web Service).
+ */
+export async function facturarVentaFiscal(
+  contexto: ContextoFacturacion,
+  input: FacturarVentaInput,
+  supervisorAutorizacion?: SupervisorAutorizacion | null,
+): Promise<FacturarVentaResult> {
+  return facturar(contexto, input, true, emisorFiscalAfip, supervisorAutorizacion);
+}
+
+/**
+ * POST /api/ventas/emitir-interno — Operación INTERNA: nunca toca AFIP
+ * (`emisorInterno`, cero imports de `src/afip/**`, verificado en CI).
+ */
+export async function emitirVentaInterna(
+  contexto: ContextoFacturacion,
+  input: FacturarVentaInput,
+  supervisorAutorizacion?: SupervisorAutorizacion | null,
+): Promise<FacturarVentaResult> {
+  return facturar(contexto, input, false, emisorInterno, supervisorAutorizacion);
 }
 
 /**
@@ -375,10 +360,8 @@ export async function facturarComprobanteInterno(
       tipo_documento: TipoDocumento;
       id_zona: number | null;
       es_fiscal: boolean;
-      estado_facturacion_interna: string | null;
     }>(
-      `SELECT id_documento, id_sucursal_origen, cliente_id, total_neto, tipo_documento, id_zona, es_fiscal,
-              estado_facturacion_interna
+      `SELECT id_documento, id_sucursal_origen, cliente_id, total_neto, tipo_documento, id_zona, es_fiscal
        FROM documentos WHERE id_documento = $1 FOR UPDATE`,
       [id_documento_ci],
     );
@@ -390,28 +373,19 @@ export async function facturarComprobanteInterno(
     if (ci.es_fiscal) {
       throw AppError.badRequest('DOCUMENTO_YA_FISCAL', 'El documento ya es una Factura fiscal, no es un Comprobante Interno.');
     }
-    if (ci.estado_facturacion_interna === 'FACTURADA') {
+    const comprobanteInterno = await obtenerComprobanteInterno(client, ci.id_documento);
+    if (comprobanteInterno?.estado_facturacion_interna === 'FACTURADA') {
       throw AppError.conflict('YA_FACTURADO', 'Este Comprobante Interno ya fue facturado fiscalmente.');
     }
 
     const cliente = await buscarClientePorId(ci.cliente_id, client);
-    const tipoComprobante = TIPO_COMPROBANTE_AFIP[ci.tipo_documento as 'FACTURA_A' | 'FACTURA_B'];
+    const tipoDocumentoFactura = ci.tipo_documento as 'FACTURA_A' | 'FACTURA_B';
 
     const { rows: nuevaRows } = await client.query<Documento>(
-      `INSERT INTO documentos (id_sucursal_origen, fecha, cliente_id, total_neto, tipo_documento, id_zona,
-                                es_fiscal, tipo_comprobante, punto_venta, estado_afip, id_documento_origen_ci)
-       VALUES ($1, NOW(), $2, $3, $4, $5, TRUE, $6, $7, 'PENDIENTE', $8)
-       RETURNING ${DOCUMENTO_COLUMNAS}`,
-      [
-        ci.id_sucursal_origen,
-        ci.cliente_id,
-        ci.total_neto,
-        ci.tipo_documento,
-        ci.id_zona,
-        tipoComprobante,
-        env.afip.puntoVenta,
-        ci.id_documento,
-      ],
+      `INSERT INTO documentos (id_sucursal_origen, fecha, cliente_id, total_neto, tipo_documento, id_zona, es_fiscal, id_documento_origen_ci)
+       VALUES ($1, NOW(), $2, $3, $4, $5, TRUE, $6)
+       RETURNING ${DOCUMENTO_COLUMNAS_BASE}`,
+      [ci.id_sucursal_origen, ci.cliente_id, ci.total_neto, ci.tipo_documento, ci.id_zona, ci.id_documento],
     );
     let documento: Documento = { ...nuevaRows[0], items: [] };
 
@@ -451,41 +425,16 @@ export async function facturarComprobanteInterno(
 
     await recalcularEstadoDespacho(client, documento.id_documento);
 
-    await client.query(`UPDATE documentos SET estado_facturacion_interna = 'FACTURADA' WHERE id_documento = $1`, [
-      ci.id_documento,
-    ]);
+    await marcarComprobanteInternoFacturado(client, ci.id_documento);
 
-    const { neto, iva } = calcularNetoEIva(Number(ci.total_neto));
-    const resultadoAfip = await solicitarCaeParaDocumento(client, {
+    const resultadoEmision = await emisorFiscalAfip.emitir(client, {
       id_documento: documento.id_documento,
-      puntoVenta: env.afip.puntoVenta,
-      tipoComprobante,
-      docTipo: docTipoAfip(cliente.tipo_documento),
-      docNro: cliente.numero_documento,
-      importeTotal: Number(ci.total_neto),
-      importeNeto: neto,
-      importeIva: iva,
-      nroComprobanteAfipPrevio: null,
+      nro_remito: documento.nro_remito,
+      tipo_documento: tipoDocumentoFactura,
+      total_neto: Number(ci.total_neto),
+      cliente,
     });
-
-    if (resultadoAfip.ok) {
-      const { rows } = await client.query<Documento>(
-        `UPDATE documentos SET cae = $1, cae_vencimiento = $2, estado_afip = 'APROBADO'
-         WHERE id_documento = $3 RETURNING ${DOCUMENTO_COLUMNAS}`,
-        [resultadoAfip.cae, resultadoAfip.caeVencimiento, documento.id_documento],
-      );
-      documento = { ...rows[0], items };
-    } else {
-      const { rows } = await client.query<Documento>(
-        `UPDATE documentos SET estado_afip = $1, error_afip_mensaje = $2
-         WHERE id_documento = $3 RETURNING ${DOCUMENTO_COLUMNAS}`,
-        [resultadoAfip.tipo, resultadoAfip.mensaje, documento.id_documento],
-      );
-      documento = { ...rows[0], items };
-      if (resultadoAfip.tipo === 'CONTINGENCIA') {
-        await encolarContingencia(client, documento.id_documento);
-      }
-    }
+    documento = { ...documento, ...resultadoEmision, items };
 
     return { documento, remitos_regularizacion: remitosRegularizacion };
   });
@@ -515,7 +464,7 @@ export async function guardarPresupuesto(
     const { rows } = await client.query<Documento>(
       `INSERT INTO documentos (id_sucursal_origen, fecha, cliente_id, total_neto, tipo_documento)
        VALUES ($1, NOW(), $2, $3, 'PRESUPUESTO')
-       RETURNING ${DOCUMENTO_COLUMNAS}`,
+       RETURNING ${DOCUMENTO_COLUMNAS_BASE}`,
       [id_sucursal, input.cliente_id, totalNeto],
     );
     const documento: Documento = { ...rows[0], items };
